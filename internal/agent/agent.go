@@ -11,12 +11,16 @@ import (
 	"github.com/cloudcentinel/hoa/internal/tool"
 )
 
+// OutputFunc is called by the agent to emit text or tool events.
+type OutputFunc func(kind string, text string)
+
 // Agent owns one conversation: a provider, tools, and a message history.
 type Agent struct {
 	Provider provider.Provider
 	Tools    *tool.Registry
 	System   string
 	MaxTurns int
+	OnOutput OutputFunc
 
 	messages []api.Message
 }
@@ -28,6 +32,7 @@ func New(p provider.Provider, system string, tools *tool.Registry) *Agent {
 		Tools:    tools,
 		System:   system,
 		MaxTurns: 20,
+		OnOutput: func(kind, text string) { fmt.Println(text) },
 	}
 }
 
@@ -56,12 +61,12 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			switch b.Type {
 			case api.BlockText:
 				if b.Text != "" {
-					fmt.Println(b.Text)
+					a.OnOutput("text", b.Text)
 					finalText.WriteString(b.Text)
 					finalText.WriteString("\n")
 				}
 			case api.BlockToolUse:
-				fmt.Printf("[tool] %s\n", b.ToolName)
+				a.OnOutput("tool", b.ToolName)
 				result, isErr := a.Tools.Execute(ctx, b.ToolName, b.ToolInput)
 				toolResults = append(toolResults, api.Block{
 					Type:       api.BlockToolResult,
