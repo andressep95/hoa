@@ -16,15 +16,15 @@ import (
 	"github.com/cloudcentinel/hoa/internal/tool"
 )
 
-const systemPrompt = `You are HOA, a coding assistant running in a terminal.
+const systemPrompt = `You are HOA (Harness Oriented Agent), a coding assistant running in a terminal.
 You have tools: bash, read_file, grep, glob. Use them to help the user.
 Be concise. Answer in the user's language.`
 
 var (
-	promptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	promptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Bold(true)
 	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	errorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-	toolStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	toolStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
 )
 
 func main() {
@@ -118,8 +118,8 @@ func printBanner(providerName, baseModel, planModel string) {
   ██║  ██║╚██████╔╝██║  ██║
   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝`
 
-	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	subtitleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("141"))
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Bold(true)
+	subtitleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
 
 	fmt.Println(titleStyle.Render(banner))
 	fmt.Println(subtitleStyle.Render("  Harness-Oriented Agents"))
