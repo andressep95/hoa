@@ -9,9 +9,8 @@ import (
 )
 
 var (
-	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
-	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("33"))
+	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Bold(true)
 )
 
 // SelectorItem is one option in the selector.
@@ -68,18 +67,18 @@ func (m SelectorModel) View() string {
 	sb.WriteString(m.Title + "\n\n")
 	for i, item := range m.Items {
 		cursor := "  "
-		style := dimStyle
+		style := StyleDim
 		if i == m.cursor {
 			cursor = cursorStyle.Render("▸ ")
 			style = selectedStyle
 		}
 		line := style.Render(item.Label)
 		if item.Hint != "" {
-			line += dimStyle.Render("  " + item.Hint)
+			line += StyleDim.Render("  " + item.Hint)
 		}
 		sb.WriteString(fmt.Sprintf("%s%s\n", cursor, line))
 	}
-	sb.WriteString(dimStyle.Render("\n  ↑↓ navegar · enter seleccionar · esc cancelar"))
+	sb.WriteString(StyleDim.Render("\n  ↑↓ navegar · enter seleccionar · esc cancelar"))
 	return sb.String()
 }
 

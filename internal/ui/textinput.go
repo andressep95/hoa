@@ -3,10 +3,7 @@ package ui
 import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
-
-var promptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
 
 // InputModel is a Bubble Tea model for text input.
 type InputModel struct {
@@ -52,7 +49,7 @@ func (m InputModel) View() string {
 	if m.done {
 		return ""
 	}
-	return promptStyle.Render(m.label) + "\n" + m.input.View() + "\n"
+	return StylePrompt.Render(m.label) + "\n" + m.input.View() + "\n"
 }
 
 func (m InputModel) Value() string    { return m.value }
