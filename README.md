@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/hoa-pet.png" alt="HOA" width="300"/>
+  <img src="docs/hoa-pet.png" alt="HOA" width="100%"/>
 </p>
 
 <h1 align="center">HOA — Harness-Oriented Agents</h1>
