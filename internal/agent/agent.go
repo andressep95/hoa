@@ -3,7 +3,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/cloudcentinel/hoa/internal/api"
@@ -17,8 +19,10 @@ type OutputFunc func(kind string, text string)
 // WorkingContextFunc returns context from uncommitted changes.
 type WorkingContextFunc func() string
 
-// MemorySearchFunc searches project memory and returns formatted context.
-type MemorySearchFunc func(query string) string
+// MemorySearchFunc searches project memory.
+// Returns the formatted context to inject into the LLM prompt and the list of
+// human-readable resource labels to display in the UI.
+type MemorySearchFunc func(query string) (context string, labels []string)
 
 // Agent owns one conversation: a provider, tools, and a message history.
 type Agent struct {
@@ -29,6 +33,7 @@ type Agent struct {
 	OnOutput       OutputFunc
 	MemorySearch   MemorySearchFunc
 	WorkingContext WorkingContextFunc
+	VerifyCmd      string // build command to run after file modifications
 
 	messages []api.Message
 }
@@ -52,13 +57,19 @@ func (a *Agent) Send(ctx context.Context, prompt string) (string, error) {
 	if a.WorkingContext != nil {
 		if wc := a.WorkingContext(); wc != "" {
 			contextParts = append(contextParts, wc)
+			n := strings.Count(wc, "\n--- ")
+			a.OnOutput("context", fmt.Sprintf("📂 %d archivo(s) en progreso inyectados", n))
 		}
 	}
 
 	// 2. Memory context (Oracle — historical relevance)
 	if a.MemorySearch != nil {
-		if mc := a.MemorySearch(prompt); mc != "" {
+		if mc, labels := a.MemorySearch(prompt); mc != "" {
 			contextParts = append(contextParts, mc)
+			a.OnOutput("context", fmt.Sprintf("🧠 %d resultado(s) de Oracle:", len(labels)))
+			for _, label := range labels {
+				a.OnOutput("memory-item", label)
+			}
 		}
 	}
 
@@ -86,17 +97,22 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		a.messages = append(a.messages, api.Message{Role: api.RoleAssistant, Content: resp.Content})
 
 		var toolResults []api.Block
+		var wroteFiles bool
+		var turnText strings.Builder
 		for _, b := range resp.Content {
 			switch b.Type {
 			case api.BlockText:
 				if b.Text != "" {
-					a.OnOutput("text", b.Text)
+					turnText.WriteString(b.Text)
 					finalText.WriteString(b.Text)
 					finalText.WriteString("\n")
 				}
 			case api.BlockToolUse:
-				a.OnOutput("tool", b.ToolName)
+				a.OnOutput("tool", formatToolCall(b.ToolName, b.ToolInput))
 				result, isErr := a.Tools.Execute(ctx, b.ToolName, b.ToolInput)
+				if isWriteTool(b.ToolName, b.ToolInput) {
+					wroteFiles = true
+				}
 				toolResults = append(toolResults, api.Block{
 					Type:       api.BlockToolResult,
 					ToolUseID:  b.ToolUseID,
@@ -106,8 +122,24 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 			}
 		}
 
+		// Emit accumulated text as one block (for proper markdown rendering)
+		if turnText.Len() > 0 {
+			a.OnOutput("text", turnText.String())
+		}
+
 		if resp.StopReason != api.StopToolUse || len(toolResults) == 0 {
 			return strings.TrimSpace(finalText.String()), nil
+		}
+
+		// Write-verify loop: run build only if a write-capable tool was used
+		if a.VerifyCmd != "" && wroteFiles {
+			if verifyErr := a.runVerify(); verifyErr != "" {
+				a.OnOutput("verify", "⚠️ build failed")
+				toolResults = append(toolResults, api.Block{
+					Type:       api.BlockText,
+					Text:       "BUILD FAILED. Fix the errors before continuing:\n" + verifyErr,
+				})
+			}
 		}
 
 		a.messages = append(a.messages, api.Message{Role: api.RoleUser, Content: toolResults})
@@ -139,4 +171,49 @@ func (a *Agent) SendOneShot(ctx context.Context, prompt string) (string, error) 
 		}
 	}
 	return strings.TrimSpace(text.String()), nil
+}
+
+func (a *Agent) runVerify() string {
+	out, err := exec.Command("sh", "-c", a.VerifyCmd).CombinedOutput()
+	if err != nil {
+		result := strings.TrimSpace(string(out))
+		if len(result) > 3000 {
+			result = result[:3000]
+		}
+		return result
+	}
+	return ""
+}
+
+// formatToolCall builds a human-readable label for a tool invocation.
+// It extracts the most relevant argument so the user can see what the tool is doing.
+func formatToolCall(name, input string) string {
+	var args map[string]any
+	if err := json.Unmarshal([]byte(input), &args); err != nil {
+		return name
+	}
+	// Ordered by relevance per tool type
+	for _, field := range []string{"command", "pattern", "path", "query", "glob", "content"} {
+		if v, ok := args[field]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				if len(s) > 70 {
+					s = s[:67] + "..."
+				}
+				return name + " " + s
+			}
+		}
+	}
+	return name
+}
+
+func isWriteTool(name string, input string) bool {
+	switch name {
+	case "write_file", "edit_file":
+		return true
+	case "bash":
+		return strings.Contains(input, ">") || strings.Contains(input, "tee ") ||
+			strings.Contains(input, "mv ") || strings.Contains(input, "cp ") ||
+			strings.Contains(input, "sed ") || strings.Contains(input, "mkdir ")
+	}
+	return false
 }

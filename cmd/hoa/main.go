@@ -12,13 +12,20 @@ import (
 	"github.com/cloudcentinel/hoa/internal/config"
 	"github.com/cloudcentinel/hoa/internal/memory"
 	"github.com/cloudcentinel/hoa/internal/provider"
+	"github.com/cloudcentinel/hoa/internal/stack"
 	"github.com/cloudcentinel/hoa/internal/tool"
 	"github.com/cloudcentinel/hoa/internal/ui"
 )
 
 const systemPrompt = `You are HOA (Harness Oriented Agent), a coding assistant running in a terminal.
 You have tools: bash, read_file, grep, glob. Use them to help the user.
-Be concise. Answer in the user's language.`
+Be concise. Answer in the user's language.
+
+IMPORTANT — Context injection:
+Your messages may include <working_changes>, <project_memory>, and <feedback_rules> blocks.
+These contain pre-loaded context from the project's vector database and git state.
+USE THIS CONTEXT FIRST before reading files. Only use tools if the injected context is insufficient.
+Do not re-read files whose content is already in the injected context.`
 
 var knownProvidersList = []struct {
 	Name   string
@@ -47,31 +54,52 @@ func main() {
 	llm := newProvider(cfg)
 	a := agent.New(llm, systemPrompt, tool.Default)
 
+	// Detect project stack for write-verify loop
+	proj := stack.Detect()
+	if proj.BuildCmd != "" {
+		a.VerifyCmd = proj.BuildCmd
+	}
+
 	// Wire memory search if enabled
 	if cfg.Memory.Enabled && cfg.Memory.DSN != "" && cfg.Memory.APIKey != "" {
-		a.MemorySearch = func(query string) string {
+		a.MemorySearch = func(query string) (string, []string) {
 			mc, err := memory.NewClient(cfg.Memory.DSN, cfg.Memory.APIKey)
 			if err != nil {
-				return ""
+				return "", nil
 			}
 			defer mc.Close()
 
 			var parts []string
+			var labels []string
 
 			// Feedback rules (corrections/guidance)
 			if rules, err := mc.SearchFeedback(query, 3); err == nil && len(rules) > 0 {
 				parts = append(parts, memory.FormatFeedback(rules))
+				for _, r := range rules {
+					label := r.Rule
+					if len(label) > 60 {
+						label = label[:57] + "..."
+					}
+					labels = append(labels, "feedback  "+label)
+				}
 			}
 
 			// Project memory (commit history)
 			if results, err := memory.Search(mc, query, 5); err == nil && len(results) > 0 {
 				parts = append(parts, memory.FormatContext(results))
+				for _, r := range results {
+					hash := r.CommitHash
+					if len(hash) > 7 {
+						hash = hash[:7]
+					}
+					labels = append(labels, r.FilePath+"  "+hash)
+				}
 			}
 
 			if len(parts) == 0 {
-				return ""
+				return "", nil
 			}
-			return strings.Join(parts, "\n\n")
+			return strings.Join(parts, "\n\n"), labels
 		}
 	}
 
