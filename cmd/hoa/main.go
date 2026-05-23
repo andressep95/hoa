@@ -45,21 +45,58 @@ func main() {
 	llm := newProvider(cfg)
 	a := agent.New(llm, systemPrompt, tool.Default)
 
-	p, _ := cfg.ActiveProviderConfig()
-	mode := "execute" // default mode
-	banner := buildBanner(cfg.ActiveProvider, p.Models.Base, p.Models.Planning, mode)
+	mode := cfg.Harness.Mode
+	if mode == "" {
+		mode = "execute"
+	}
+
+	bannerFn := func() string {
+		pc, _ := cfg.ActiveProviderConfig()
+		return buildBanner(cfg.ActiveProvider, a.Provider.Model(), pc.Models.Planning, mode)
+	}
 
 	cmdCtx := &command.Context{
-		GetModel:    llm.Model,
-		SetModel:    llm.SetModel,
+		GetModel: func() string { return a.Provider.Model() },
+		SetModel: func(name string) {
+			a.Provider.SetModel(name)
+			p, _ := cfg.ActiveProviderConfig()
+			p.Models.Base = name
+			cfg.Providers[cfg.ActiveProvider] = p
+			config.Save(cfg)
+		},
 		GetPlanModel: func() string { p, _ := cfg.ActiveProviderConfig(); return p.Models.Planning },
 		SetPlanModel: func(name string) {
 			p, _ := cfg.ActiveProviderConfig()
 			p.Models.Planning = name
 			cfg.Providers[cfg.ActiveProvider] = p
+			config.Save(cfg)
 		},
 		GetProvider: func() string { return cfg.ActiveProvider },
-		SetProvider: func(name string) { cfg.ActiveProvider = name },
+		SetProvider: func(name string) {
+			cfg.ActiveProvider = name
+			newLLM := newProvider(cfg)
+			a.Provider = newLLM
+			config.Save(cfg)
+		},
+		SetupProvider: func(name string) {
+			// Prompt for API key using TUI input (runs outside alt-screen)
+			apiKey := ui.RunInput(fmt.Sprintf("API Key para %s:", name), "sk-...", true)
+			if apiKey == "" {
+				return
+			}
+			// Find default model for this provider
+			model := "claude-sonnet-4-6"
+			for _, kp := range knownProvidersList {
+				if kp.Name == name && len(kp.Models) > 0 {
+					model = kp.Models[0]
+				}
+			}
+			cfg.Providers[name] = config.ProviderConfig{
+				APIKey: apiKey,
+				Models: config.ModelsConfig{Base: model, Planning: model},
+			}
+			config.Save(cfg)
+		},
 		GetModels: func() []string {
 			for _, kp := range knownProvidersList {
 				if kp.Name == cfg.ActiveProvider {
@@ -76,12 +113,16 @@ func main() {
 			return names
 		},
 		GetMode: func() string { return mode },
-		SetMode: func(m string) { mode = m },
+		SetMode: func(m string) {
+			mode = m
+			cfg.Harness.Mode = m
+			config.Save(cfg)
+		},
 		TokensUsed: func() (int, int) {
-			u := llm.TotalUsage()
+			u := a.Provider.TotalUsage()
 			return u.InputTokens, u.OutputTokens
 		},
-		ClearHist:   a.ClearMessages,
+		ClearHist: a.ClearMessages,
 		ToolNames: func() []string {
 			defs := tool.Default.Definitions()
 			names := make([]string, len(defs))
@@ -95,7 +136,7 @@ func main() {
 		},
 	}
 
-	prog, outputFn := ui.NewProgram(banner, a.Send, cmdCtx)
+	prog, outputFn := ui.NewProgram(bannerFn, a.Send, cmdCtx)
 	a.OnOutput = outputFn
 
 	if _, err := prog.Run(); err != nil {
@@ -126,11 +167,10 @@ func buildBanner(providerName, baseModel, planModel, mode string) string {
   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝`
 
 	out := ui.StyleTitle.Render(banner) + "\n"
-	out += ui.StyleSubtitle.Render("  Harness-Oriented Agents") + "\n\n"
+	out += ui.StyleSubtitle.Render("  Harness Oriented Agents") + "\n\n"
 	out += fmt.Sprintf("  %s %s\n", ui.StyleDim.Render("provider:"), providerName)
 	out += fmt.Sprintf("  %s %s\n", ui.StyleDim.Render("base:"), baseModel)
 	out += fmt.Sprintf("  %s %s\n", ui.StyleDim.Render("planning:"), planModel)
 	out += fmt.Sprintf("  %s %s\n", ui.StyleDim.Render("mode:"), mode)
-	out += "\n" + ui.StyleDim.Render("  /help para comandos · /exit para salir")
 	return out
 }

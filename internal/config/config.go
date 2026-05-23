@@ -50,6 +50,7 @@ type DatabaseConfig struct {
 
 // HarnessConfig holds harness behavior flags.
 type HarnessConfig struct {
+	Mode             string  `json:"mode,omitempty"` // "execute" or "plan+execute"
 	VerifyAfterWrite bool    `json:"verifyAfterWrite"`
 	SDDEnforced      bool    `json:"sddEnforced"`
 	MaxRetries       int     `json:"maxRetries"`
