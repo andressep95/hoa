@@ -1,3 +1,4 @@
 # Binaries
 hoa
 *.exe
+docker/oracle/models/
