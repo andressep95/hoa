@@ -282,8 +282,15 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		item := m.menuItems[m.menuCursor]
 		if item.Action != nil {
-			item.Action()
-			m.history = append(m.history, StyleDim.Render("  ⎿  "+item.Label), "")
+			result := item.Action()
+			if result != "" {
+				for _, line := range strings.Split(result, "\n") {
+					m.history = append(m.history, StyleDim.Render("  ⎿  "+line))
+				}
+			} else {
+				m.history = append(m.history, StyleDim.Render("  ⎿  "+item.Label))
+			}
+			m.history = append(m.history, "")
 		}
 		m.menuActive = false
 	case "esc", "ctrl+c", "q":
