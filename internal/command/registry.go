@@ -12,25 +12,29 @@ type MenuItem struct {
 
 // Result holds the output of a command execution.
 type Result struct {
-	Lines []string
-	Menu  []MenuItem // if non-nil, TUI shows interactive menu
-	Title string     // menu title
-	Quit  bool
+	Lines   []string
+	Menu    []MenuItem // if non-nil, TUI shows interactive menu
+	Title   string     // menu title
+	Quit    bool
+	AsyncFn func() Result // if set, TUI runs this in background with spinner
 }
 
 // Context provides commands access to the runtime state.
 type Context struct {
-	GetModel      func() string
-	SetModel      func(string)
-	GetPlanModel  func() string
-	SetPlanModel  func(string)
-	GetProvider   func() string
-	SetProvider   func(string)
-	GetModels     func() []string // available models for current provider
-	GetProviders  func() []string // all configured provider names
-	TokensUsed    func() (int, int)
-	ClearHist     func()
-	ToolNames     func() []string
+	GetModel     func() string
+	SetModel     func(string)
+	GetPlanModel func() string
+	SetPlanModel func(string)
+	GetProvider  func() string
+	SetProvider  func(string)
+	GetModels    func() []string
+	GetProviders func() []string
+	GetMode      func() string
+	SetMode      func(string)
+	TokensUsed   func() (int, int)
+	ClearHist    func()
+	ToolNames    func() []string
+	AgentSend    func(prompt string) (string, error) // send to LLM without adding to conversation
 }
 
 // Handler is a function that executes a slash command.
@@ -75,6 +79,7 @@ func Dispatch(ctx *Context, input string) (Result, bool) {
 func init() {
 	Register("help", cmdHelp)
 	Register("model", cmdModel)
+	Register("mode", cmdMode)
 	Register("provider", cmdProvider)
 	Register("tokens", cmdTokens)
 	Register("clear", cmdClear)

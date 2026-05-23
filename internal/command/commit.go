@@ -1,6 +1,8 @@
 package command
 
 import (
+	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strings"
 
@@ -8,133 +10,210 @@ import (
 )
 
 var (
-	greenStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	redStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	greenStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	redStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	resultStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).SetString("  ⎿  ")
 )
 
 func init() {
 	Register("commit", cmdCommit)
 }
 
-// cmdCommit handles /commit and /commit <message>.
-// Without args: shows status and instructions.
-// With args: validates message and executes git commit if valid.
-func cmdCommit(_ *Context, args string) Result {
-	// Step 1: git status
+const commitSystemPrompt = `Analyze the git diff and generate commit message(s).
+
+RESPOND ONLY WITH VALID JSON. No markdown, no explanation.
+
+Schema:
+{
+  "commits": [
+    {
+      "type": "feat|fix|refactor|perf|sec|test|docs|chore|ci|style",
+      "scope": "module name from top-level dir",
+      "description": "imperative, < 50 chars, no period",
+      "what": "one sentence, what the code does now (< 72 chars)",
+      "why": "one sentence, why it was necessary (< 72 chars)",
+      "breaking": false,
+      "files": ["path/to/file1.go", "path/to/file2.go"]
+    }
+  ]
+}
+
+Rules:
+- Scope from top-level directory or module (agent, ui, command, config, etc.)
+- what/why MUST be specific. Bad: "improve things". Good: "Adds /mode command to switch execution modes"
+- If changes are CLEARLY unrelated, split into multiple commits
+- If changes are related, use ONE commit
+- files: list the files that belong to each commit
+- ALL strings < 72 chars`
+
+// CommitProposal is what the LLM returns.
+type CommitProposal struct {
+	Type        string   `json:"type"`
+	Scope       string   `json:"scope"`
+	Description string   `json:"description"`
+	What        string   `json:"what"`
+	Why         string   `json:"why"`
+	Breaking    bool     `json:"breaking"`
+	Files       []string `json:"files"`
+}
+
+type commitResponse struct {
+	Commits []CommitProposal `json:"commits"`
+}
+
+func (c CommitProposal) Message() string {
+	header := fmt.Sprintf("%s(%s): %s", c.Type, c.Scope, c.Description)
+	return fmt.Sprintf("%s\n\nwhat: %s\nwhy: %s\nbreaking: %v", header, c.What, c.Why, c.Breaking)
+}
+
+func cmdCommit(ctx *Context, _ string) Result {
 	status := gitRun("status", "--short")
 	if strings.TrimSpace(status) == "" {
-		return Result{Lines: []string{"  No hay cambios para commitear."}}
+		return Result{Lines: []string{resultStyle.Render("No hay cambios para commitear.")}}
 	}
 
-	// If no message provided, show analysis and wait for message
-	if args == "" {
-		return commitAnalysis(status)
+	return Result{
+		Lines:   []string{resultStyle.Render("Analizando cambios...")},
+		AsyncFn: func() Result { return generateCommit(ctx, status) },
 	}
-
-	// Message provided — validate before committing
-	return commitExecute(args, status)
 }
 
-func commitAnalysis(status string) Result {
+func generateCommit(ctx *Context, status string) Result {
 	sensitive := checkSensitiveFiles(status)
-	diff := gitRun("diff", "--stat", "HEAD")
+
+	diff := gitRun("diff", "HEAD")
+	if len(diff) > 8000 {
+		diff = diff[:8000] + "\n... (truncated)"
+	}
+	stat := gitRun("diff", "--stat", "HEAD")
 	log := gitRun("log", "-3", "--oneline")
 
-	lines := []string{"  ── /commit ──", ""}
-	lines = append(lines, "  Archivos modificados:")
-	for _, l := range strings.Split(status, "\n") {
-		if l != "" {
-			lines = append(lines, "    "+l)
-		}
+	if ctx.AgentSend == nil {
+		return Result{Lines: []string{resultStyle.Render("AgentSend no disponible. Pide al agente: \"haz commit\"")}}
 	}
 
-	if len(sensitive) > 0 {
-		lines = append(lines, "", "  ⚠️  Archivos sensibles detectados (NO se commitearán):")
-		for _, s := range sensitive {
-			lines = append(lines, "    "+s)
-		}
-	}
+	prompt := commitSystemPrompt + "\n\nDIFF STAT:\n" + stat + "\n\nRECENT COMMITS:\n" + log + "\n\nDIFF:\n" + diff
 
-	if diff != "" {
-		lines = append(lines, "", "  Diff stat:")
-		for _, l := range strings.Split(diff, "\n") {
-			if l != "" {
-				lines = append(lines, "    "+colorizeDiffStat(l))
-			}
-		}
-	}
-
-	if log != "" {
-		lines = append(lines, "", "  Últimos commits:")
-		for _, l := range strings.Split(log, "\n") {
-			if l != "" {
-				lines = append(lines, "    "+l)
-			}
-		}
-	}
-
-	lines = append(lines, "")
-	lines = append(lines, "  Usa: /commit type(scope): description\\nwhat: ...\\nwhy: ...\\nbreaking: false")
-	lines = append(lines, "  O pide al agente: \"haz commit de estos cambios\"")
-
-	return Result{Lines: lines}
-}
-
-func commitExecute(msg, status string) Result {
-	// Normalize escaped newlines from single-line input
-	msg = strings.ReplaceAll(msg, "\\n", "\n")
-
-	// Pre-commit validation — BLOCKS if format is wrong
-	if errs := ValidateCommitMsg(msg); len(errs) > 0 {
-		lines := []string{"  ❌ Commit BLOQUEADO — no cumple Conventional Commits:", ""}
-		for _, e := range errs {
-			lines = append(lines, "    • "+e)
-		}
-		lines = append(lines, "", "  Formato requerido:")
-		lines = append(lines, "    type(scope): description")
-		lines = append(lines, "    ")
-		lines = append(lines, "    what: qué hace el código ahora")
-		lines = append(lines, "    why: por qué fue necesario")
-		lines = append(lines, "    breaking: false")
-		return Result{Lines: lines}
-	}
-
-	// Sensitive file guard — exclude them
-	sensitive := checkSensitiveFiles(status)
-	if len(sensitive) > 0 {
-		// Stage all except sensitive
-		gitRun("add", "-A")
-		for _, s := range sensitive {
-			parts := strings.Fields(s)
-			if len(parts) >= 2 {
-				gitRun("reset", "HEAD", "--", parts[1])
-			}
-		}
-	} else {
-		gitRun("add", "-A")
-	}
-
-	// Execute git commit
-	out, err := exec.Command("git", "commit", "-m", msg).CombinedOutput()
+	response, err := ctx.AgentSend(prompt)
 	if err != nil {
+		return Result{Lines: []string{resultStyle.Render("Error: " + err.Error())}}
+	}
+
+	// Parse JSON response
+	response = stripCodeFences(response)
+	var parsed commitResponse
+	if err := json.Unmarshal([]byte(response), &parsed); err != nil {
+		// Fallback: try to use raw response as single commit
 		return Result{Lines: []string{
-			"  ❌ git commit falló:",
-			"  " + strings.TrimSpace(string(out)),
+			resultStyle.Render("LLM no devolvió JSON válido. Respuesta:"),
+			"",
+			"  " + strings.ReplaceAll(response, "\n", "\n  "),
 		}}
 	}
 
-	lines := []string{"  ✅ Commit exitoso:", ""}
-	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		lines = append(lines, "    "+l)
+	if len(parsed.Commits) == 0 {
+		return Result{Lines: []string{resultStyle.Render("No se generaron commits.")}}
 	}
 
-	// TODO: Post-commit memory push to Oracle
-	// When memory is connected:
-	// 1. Extract changes (file-level granularity)
-	// 2. INSERT into MEMORY_CHANGES + MEMORY_CHANGE_HUNKS
-	// 3. Queue embedding generation via ENRICHMENT_QUEUE
+	return presentCommits(parsed.Commits, sensitive, ctx)
+}
 
-	return Result{Lines: lines}
+func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) Result {
+	lines := []string{""}
+
+	for i, c := range commits {
+		if len(commits) > 1 {
+			lines = append(lines, fmt.Sprintf("  %s %s(%s): %s",
+				greenStyle.Render(fmt.Sprintf("[%d/%d]", i+1, len(commits))),
+				c.Type, c.Scope, c.Description))
+		} else {
+			lines = append(lines, fmt.Sprintf("  %s(%s): %s", c.Type, c.Scope, c.Description))
+		}
+		lines = append(lines,
+			fmt.Sprintf("    what: %s", c.What),
+			fmt.Sprintf("    why:  %s", c.Why),
+			fmt.Sprintf("    breaking: %v", c.Breaking),
+		)
+		if len(c.Files) > 0 {
+			lines = append(lines, "    "+resultStyle.Render(strings.Join(c.Files, ", ")))
+		}
+		lines = append(lines, "")
+	}
+
+	// Build menu options
+	items := []MenuItem{}
+
+	if len(commits) == 1 {
+		msg := commits[0].Message()
+		items = append(items, MenuItem{
+			Label:  "✓ Confirmar commit",
+			Action: func() { executeCommit(msg, commits[0].Files, sensitive) },
+		})
+	} else {
+		items = append(items, MenuItem{
+			Label: fmt.Sprintf("✓ Commitear %d commits separados", len(commits)),
+			Action: func() {
+				for _, c := range commits {
+					executeCommit(c.Message(), c.Files, sensitive)
+				}
+			},
+		})
+		items = append(items, MenuItem{
+			Label: "⊕ Unificar en 1 solo commit",
+			Action: func() {
+				executeCommit(commits[0].Message(), nil, sensitive)
+			},
+		})
+	}
+
+	items = append(items, MenuItem{
+		Label:  "✎ Dar feedback (regenerar)",
+		Action: nil, // TODO: prompt user for feedback text, re-run with guidance
+	})
+	items = append(items, MenuItem{
+		Label:  "✗ Cancelar",
+		Action: func() {},
+	})
+
+	return Result{
+		Lines: lines,
+		Title: resultStyle.Render(fmt.Sprintf("%d commit(s) propuesto(s)", len(commits))),
+		Menu:  items,
+	}
+}
+
+func executeCommit(msg string, files []string, sensitive []string) {
+	if errs := ValidateCommitMsg(msg); len(errs) > 0 {
+		return
+	}
+
+	if len(files) > 0 {
+		for _, f := range files {
+			exec.Command("git", "add", "--", f).Run()
+		}
+	} else {
+		exec.Command("git", "add", "-A").Run()
+	}
+
+	for _, s := range sensitive {
+		parts := strings.Fields(s)
+		if len(parts) >= 2 {
+			exec.Command("git", "reset", "HEAD", "--", parts[len(parts)-1]).Run()
+		}
+	}
+
+	exec.Command("git", "commit", "-m", msg).Run()
+}
+
+func stripCodeFences(s string) string {
+	var lines []string
+	for _, l := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "```") {
+			continue
+		}
+		lines = append(lines, l)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func gitRun(args ...string) string {
@@ -146,7 +225,6 @@ func gitRun(args ...string) string {
 }
 
 func colorizeDiffStat(line string) string {
-	// Colorize the +/- portion at the end of diff stat lines
 	idx := strings.LastIndex(line, "|")
 	if idx == -1 {
 		return line

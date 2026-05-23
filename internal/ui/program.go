@@ -19,6 +19,7 @@ type AgentSendFunc func(ctx context.Context, input string) (string, error)
 
 type outputMsg struct{ kind, text string }
 type agentDoneMsg struct{ err error }
+type asyncCmdDoneMsg struct{ result command.Result }
 
 // Model is the main Bubble Tea TUI model.
 type Model struct {
@@ -28,6 +29,7 @@ type Model struct {
 	history  []string
 	cmdHist  []string
 	histIdx  int
+	scroll   int // scroll offset from bottom (0 = latest)
 	thinking bool
 	width    int
 	height   int
@@ -44,9 +46,10 @@ type Model struct {
 	menuItems  []command.MenuItem
 	menuCursor int
 
-	// Autocomplete state (ghost text)
+	// Autocomplete state
 	acActive bool
 	acItems  []string
+	acCursor int
 }
 
 // NewProgram creates the Bubble Tea program and returns an output function for the agent.
@@ -103,9 +106,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.menuActive {
 			return m.updateMenu(msg)
 		}
-		// Autocomplete mode
+		// Autocomplete mode — intercept navigation keys only
 		if m.acActive {
-			return m.updateAutocomplete(msg)
+			switch msg.String() {
+			case "down":
+				if m.acCursor < len(m.acItems)-1 {
+					m.acCursor++
+				}
+				return m, nil
+			case "up":
+				if m.acCursor > 0 {
+					m.acCursor--
+				}
+				return m, nil
+			case "tab":
+				m.input.SetValue("/" + m.acItems[m.acCursor])
+				m.input.CursorEnd()
+				m.acActive = false
+				return m, nil
+			case "enter":
+				m.acActive = false
+				// Fall through to normal enter handling
+			case "esc":
+				m.acActive = false
+				return m, nil
+			default:
+				// Pass to input, then update suggestions
+				var cmd tea.Cmd
+				m.input, cmd = m.input.Update(msg)
+				m.updateAutocompleteState()
+				return m, cmd
+			}
 		}
 		// Thinking — only allow ctrl+c
 		if m.thinking {
@@ -114,6 +145,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 			return m, nil
+		}
+
+		// Ghost text: Tab accepts completion
+		if m.acActive && (msg.String() == "tab" || msg.String() == "right") {
+			if len(m.acItems) > 0 {
+				m.input.SetValue("/" + m.acItems[0])
+				m.input.CursorEnd()
+				m.acActive = false
+				return m, nil
+			}
 		}
 
 		switch msg.String() {
@@ -137,7 +178,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.quitting = true
 					return m, tea.Quit
 				}
+				if result.AsyncFn != nil {
+					if len(result.Lines) > 0 {
+						m.history = append(m.history, result.Lines...)
+					}
+					m.thinking = true
+					fn := result.AsyncFn
+					return m, func() tea.Msg {
+						r := fn()
+						return asyncCmdDoneMsg{result: r}
+					}
+				}
 				if len(result.Menu) > 0 {
+					if len(result.Lines) > 0 {
+						m.history = append(m.history, result.Lines...)
+					}
 					m.menuActive = true
 					m.menuTitle = result.Title
 					m.menuItems = result.Menu
@@ -177,6 +232,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.input.CursorEnd()
 			return m, nil
+
+		case "pgup":
+			m.scroll += 10
+			max := len(m.history) - 5
+			if m.scroll > max {
+				m.scroll = max
+			}
+			if m.scroll < 0 {
+				m.scroll = 0
+			}
+			return m, nil
+
+		case "pgdown":
+			m.scroll -= 10
+			if m.scroll < 0 {
+				m.scroll = 0
+			}
+			return m, nil
 		}
 
 	case agentDoneMsg:
@@ -186,6 +259,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history = append(m.history, StyleError.Render("  error: "+msg.err.Error()))
 		}
 		m.history = append(m.history, "")
+		return m, nil
+
+	case asyncCmdDoneMsg:
+		m.thinking = false
+		result := msg.result
+		if len(result.Menu) > 0 {
+			if len(result.Lines) > 0 {
+				m.history = append(m.history, result.Lines...)
+			}
+			m.menuActive = true
+			m.menuTitle = result.Title
+			m.menuItems = result.Menu
+			m.menuCursor = 0
+			return m, nil
+		}
+		m.history = append(m.history, result.Lines...)
 		return m, nil
 
 	case spinner.TickMsg:
@@ -243,102 +332,51 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) updateAutocompleteState() {
 	val := m.input.Value()
-	if strings.HasPrefix(val, "/") && !strings.Contains(val, " ") && len(val) > 1 {
+	if strings.HasPrefix(val, "/") && !strings.Contains(val, " ") {
 		prefix := strings.ToLower(val[1:])
 		names := command.Names()
 		sort.Strings(names)
 
-		// Fuzzy match: prefer prefix match, then substring match
-		var best string
-		bestScore := 0
-		for _, n := range names {
-			if n == prefix {
-				// Exact match — no ghost text needed
+		var filtered []string
+		if prefix == "" {
+			// Show all commands on bare /
+			filtered = names
+		} else {
+			// Fuzzy: prefix match first, then substring
+			for _, n := range names {
+				if strings.HasPrefix(n, prefix) {
+					filtered = append(filtered, n)
+				}
+			}
+			if len(filtered) == 0 {
+				for _, n := range names {
+					if strings.Contains(n, prefix) {
+						filtered = append(filtered, n)
+					}
+				}
+			}
+			// Exact match — hide autocomplete
+			if len(filtered) == 1 && filtered[0] == prefix {
 				m.acActive = false
 				m.acItems = nil
 				return
 			}
-			if strings.HasPrefix(n, prefix) && (bestScore < 2 || len(n) < len(best)) {
-				best = n
-				bestScore = 2
-			} else if bestScore < 1 && strings.Contains(n, prefix) {
-				best = n
-				bestScore = 1
-			}
 		}
-		if best != "" {
+
+		if len(filtered) > 0 {
 			m.acActive = true
-			m.acItems = []string{best}
+			m.acItems = filtered
+			if m.acCursor >= len(filtered) {
+				m.acCursor = 0
+			}
 			return
 		}
 	}
 	m.acActive = false
 	m.acItems = nil
+	m.acCursor = 0
 }
 
-func (m Model) updateAutocomplete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "tab", "right":
-		if len(m.acItems) > 0 {
-			m.input.SetValue("/" + m.acItems[0])
-			m.input.CursorEnd()
-			m.acActive = false
-			return m, nil
-		}
-	case "enter":
-		// Accept ghost text and execute
-		if len(m.acItems) > 0 {
-			selected := "/" + m.acItems[0]
-			m.input.SetValue("")
-			m.acActive = false
-			m.histIdx = -1
-			m.cmdHist = append(m.cmdHist, selected)
-			m.history = append(m.history, StylePrompt.Render("❯ ")+selected)
-
-			if result, handled := command.Dispatch(m.cmdCtx, selected); handled {
-				if result.Quit {
-					m.quitting = true
-					return m, tea.Quit
-				}
-				if len(result.Menu) > 0 {
-					m.menuActive = true
-					m.menuTitle = result.Title
-					m.menuItems = result.Menu
-					m.menuCursor = 0
-					return m, nil
-				}
-				m.history = append(m.history, result.Lines...)
-			}
-			return m, nil
-		}
-	case "esc":
-		m.acActive = false
-		return m, nil
-	}
-	// Pass through to input for continued typing
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	m.updateAutocompleteState()
-	return m, cmd
-}
-
-// ghostText returns the gray completion suffix to render after the input
-func (m Model) ghostText() string {
-	if !m.acActive || len(m.acItems) == 0 {
-		return ""
-	}
-	val := m.input.Value()
-	if len(val) < 2 {
-		return ""
-	}
-	prefix := val[1:] // strip the /
-	completion := m.acItems[0]
-	if strings.HasPrefix(completion, prefix) {
-		return StyleDim.Render(completion[len(prefix):])
-	}
-	// Fuzzy match — show full suggestion in parens
-	return StyleDim.Render(" → /" + completion)
-}
 
 // ── Other ───────────────────────────────────────────────────────────────────
 
@@ -381,11 +419,15 @@ func (m Model) View() string {
 	if viewportH < 10 {
 		viewportH = 20
 	}
-	start := 0
-	if len(m.history) > viewportH {
-		start = len(m.history) - viewportH
+	end := len(m.history) - m.scroll
+	if end < 0 {
+		end = 0
 	}
-	for _, line := range m.history[start:] {
+	start := end - viewportH
+	if start < 0 {
+		start = 0
+	}
+	for _, line := range m.history[start:end] {
 		sb.WriteString(line)
 		sb.WriteString("\n")
 	}
@@ -400,9 +442,20 @@ func (m Model) View() string {
 		sb.WriteString(fmt.Sprintf("  %s pensando...\n", m.spinner.View()))
 	}
 
-	// Input + ghost text
+	// Input
 	sb.WriteString(m.input.View())
-	sb.WriteString(m.ghostText())
+
+	// Autocomplete dropdown
+	if m.acActive && !m.menuActive {
+		sb.WriteString("\n")
+		for i, item := range m.acItems {
+			if i == m.acCursor {
+				sb.WriteString(StylePrompt.Render("  ❯ /"+item) + "\n")
+			} else {
+				sb.WriteString(StyleDim.Render("    /"+item) + "\n")
+			}
+		}
+	}
 
 	return sb.String()
 }

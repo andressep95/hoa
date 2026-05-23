@@ -91,3 +91,23 @@ func (a *Agent) Messages() []api.Message { return a.messages }
 
 // ClearMessages wipes the conversation.
 func (a *Agent) ClearMessages() { a.messages = a.messages[:0] }
+
+// SendOneShot sends a prompt to the LLM without affecting conversation history.
+// Used for internal tasks like commit message generation.
+func (a *Agent) SendOneShot(ctx context.Context, prompt string) (string, error) {
+	msgs := []api.Message{{
+		Role:    api.RoleUser,
+		Content: []api.Block{{Type: api.BlockText, Text: prompt}},
+	}}
+	resp, err := a.Provider.Send(ctx, msgs, nil)
+	if err != nil {
+		return "", err
+	}
+	var text strings.Builder
+	for _, b := range resp.Content {
+		if b.Type == api.BlockText {
+			text.WriteString(b.Text)
+		}
+	}
+	return strings.TrimSpace(text.String()), nil
+}

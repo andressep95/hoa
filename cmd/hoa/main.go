@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -45,7 +46,8 @@ func main() {
 	a := agent.New(llm, systemPrompt, tool.Default)
 
 	p, _ := cfg.ActiveProviderConfig()
-	banner := buildBanner(cfg.ActiveProvider, p.Models.Base, p.Models.Planning)
+	mode := "execute" // default mode
+	banner := buildBanner(cfg.ActiveProvider, p.Models.Base, p.Models.Planning, mode)
 
 	cmdCtx := &command.Context{
 		GetModel:    llm.Model,
@@ -73,6 +75,8 @@ func main() {
 			}
 			return names
 		},
+		GetMode: func() string { return mode },
+		SetMode: func(m string) { mode = m },
 		TokensUsed: func() (int, int) {
 			u := llm.TotalUsage()
 			return u.InputTokens, u.OutputTokens
@@ -85,6 +89,9 @@ func main() {
 				names[i] = d.Name
 			}
 			return names
+		},
+		AgentSend: func(prompt string) (string, error) {
+			return a.SendOneShot(context.Background(), prompt)
 		},
 	}
 
@@ -109,7 +116,7 @@ func newProvider(cfg *config.Config) provider.Provider {
 	}
 }
 
-func buildBanner(providerName, baseModel, planModel string) string {
+func buildBanner(providerName, baseModel, planModel, mode string) string {
 	banner := `
   ██╗  ██╗ ██████╗  █████╗ 
   ██║  ██║██╔═══██╗██╔══██╗
@@ -123,6 +130,7 @@ func buildBanner(providerName, baseModel, planModel string) string {
 	out += fmt.Sprintf("  %s %s\n", ui.StyleDim.Render("provider:"), providerName)
 	out += fmt.Sprintf("  %s %s\n", ui.StyleDim.Render("base:"), baseModel)
 	out += fmt.Sprintf("  %s %s\n", ui.StyleDim.Render("planning:"), planModel)
+	out += fmt.Sprintf("  %s %s\n", ui.StyleDim.Render("mode:"), mode)
 	out += "\n" + ui.StyleDim.Render("  /help para comandos · /exit para salir")
 	return out
 }
