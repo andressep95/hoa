@@ -7,8 +7,8 @@ services:
       - "1521:1521"
     environment:
       ORACLE_PASSWORD: Oracle23ai!
-      APP_USER: mcp_user
-      APP_USER_PASSWORD: Mcp_User23!
+      APP_USER: hoa
+      APP_USER_PASSWORD: Hoa_User23!
       ORACLE_CHARACTERSET: AL32UTF8
     volumes:
       - oracle-data:/opt/oracle/oradata
