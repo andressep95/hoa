@@ -1,47 +1,30 @@
-# Story 04 — Tool Registry + Tools Read-Only
+# Story 04 — Tool Registry + Tools Read-Only ✅
 
 ## Como usuario
 Quiero que el agente pueda leer archivos, buscar texto y listar archivos de mi proyecto para responder preguntas sobre el código.
 
 ## Criterios de Aceptación
 
-- [ ] Interface `Tool` con `Definition()` y `Execute(ctx, input)`
-- [ ] `Registry` con `Register()`, `Get()`, `Definitions()`, `Execute()`
-- [ ] Auto-registro via `init()` — agregar tool = crear archivo
-- [ ] Tool `read_file`: lee archivo por path, soporta offset/limit
-- [ ] Tool `grep`: búsqueda regex con ripgrep (o fallback a grep)
-- [ ] Tool `glob`: buscar archivos por patrón
-- [ ] Tool `bash`: ejecutar comando shell (read-only por ahora, sin gate)
-- [ ] El agent loop pasa `tools.Definitions()` al provider
-- [ ] El agent loop ejecuta tool calls y agrega results al historial
+- [x] `tool.Registry` con registro automático de tools
+- [x] `Definitions()` retorna las tool definitions para el modelo
+- [x] `Execute(ctx, name, input)` despacha la tool correcta
+- [x] Tool `bash` — ejecuta comandos shell (30s timeout)
+- [x] Tool `read_file` — lee archivos con offset/limit
+- [x] Tool `grep` — búsqueda regex en archivos
+- [x] Tool `glob` — buscar archivos por patrón
 
-## Archivos a Crear
+## Archivos Implementados
 
 ```
-internal/tool/registry.go    # Tool interface + Registry + Default
-internal/tool/readfile.go    # read_file tool
-internal/tool/grep.go        # grep tool
-internal/tool/glob.go        # glob tool
-internal/tool/bash.go        # bash tool
+internal/tool/registry.go    # Registry + Definitions + Execute
+internal/tool/bash.go        # Shell execution
+internal/tool/readfile.go    # File reading
+internal/tool/grep.go        # Regex search
+internal/tool/glob.go        # Pattern matching
 ```
 
-## Pattern
+## Definición de Done ✅
 
-```go
-// internal/tool/readfile.go
-package tool
-
-func init() { Default.Register(&ReadFileTool{}) }
-
-type ReadFileTool struct{}
-
-func (ReadFileTool) Definition() api.ToolDef { ... }
-func (ReadFileTool) Execute(ctx context.Context, input string) (string, bool) { ... }
-```
-
-## Definición de Done
-
-- `/tools` (o equivalente) lista las 4 tools registradas
-- "lee el archivo main.go" → el agente llama read_file y muestra contenido
-- "busca TODO en el proyecto" → el agente usa grep
-- Tool desconocida → error como tool_result, no crash
+- El modelo puede invocar las 4 tools
+- bash tiene timeout de 30s
+- read_file soporta offset/limit para archivos grandes

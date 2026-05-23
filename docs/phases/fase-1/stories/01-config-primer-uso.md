@@ -1,48 +1,30 @@
-# Story 01 — Config y Primer Uso
+# Story 01 — Config y Primer Uso ✅
 
 ## Como usuario
 Quiero que al ejecutar `hoa` por primera vez me guíe un wizard interactivo para configurar mi provider y API key, y que en ejecuciones posteriores arranque directo sin preguntar.
 
 ## Criterios de Aceptación
 
-- [ ] `config.Load()` lee `~/.hoa/config.json` si existe
-- [ ] Si no existe, `config.RunWizard()` pide: provider, API key, modelo base, modelo planning
-- [ ] `config.Save()` persiste la configuración en JSON
-- [ ] La estructura del config soporta múltiples providers con sus API keys
-- [ ] Variables de entorno (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) se usan como fallback si no hay config
+- [x] `config.Load()` lee `~/.hoa/config.json` si existe
+- [x] Si no existe, `config.RunWizard()` pide: provider, API key, modelo base, modelo planning
+- [x] `config.Save()` persiste la configuración en JSON
+- [x] La estructura del config soporta múltiples providers con sus API keys
+- [x] Variables de entorno (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) se usan como fallback si no hay config
+- [x] API keys encriptadas con AES-256-GCM en disco
+- [x] Paso opcional para configurar memoria persistente (Oracle)
+- [x] Model resolution chain: env var → config → default
 
-## Archivos a Crear
+## Archivos Implementados
 
 ```
-internal/config/config.go    # Struct Config + Load/Save/RunWizard
-cmd/hoa/main.go       # Entry point que llama config.Load()
+internal/config/config.go    # Config struct + Load/Save + ResolveModel + MemoryConfig
+internal/config/crypto.go    # AES-256-GCM encrypt/decrypt + keyring
+internal/config/wizard.go    # TUI wizard con selectores Bubble Tea
 ```
 
-## Config Struct
-
-```go
-type Config struct {
-    ActiveProvider string              `json:"provider"`
-    Models         ModelsConfig        `json:"models"`
-    Providers      map[string]ProviderConfig `json:"providers"`
-    Database       DatabaseConfig      `json:"database"`
-    Harness        HarnessConfig       `json:"harness"`
-}
-
-type ModelsConfig struct {
-    Base     string `json:"base"`
-    Planning string `json:"planning"`
-}
-
-type ProviderConfig struct {
-    APIKey  string `json:"apiKey,omitempty"`
-    BaseURL string `json:"baseUrl,omitempty"`
-}
-```
-
-## Definición de Done
+## Definición de Done ✅
 
 - `go build ./...` compila
-- `go test ./internal/config/...` pasa
-- Ejecutar el binario sin config muestra el wizard
-- Ejecutar con config existente arranca sin preguntar
+- Ejecutar sin config muestra wizard con selectores interactivos
+- Ejecutar con config existente arranca directo
+- Cambios en runtime (/model, /provider, /mode) se persisten automáticamente

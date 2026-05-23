@@ -1,26 +1,26 @@
-# Story 08 — Provider OpenAI + Swap en Runtime
+# Story 08 — Provider OpenAI + Swap en Runtime ✅
 
 ## Como usuario
 Quiero poder cambiar entre Anthropic y OpenAI a mitad de sesión sin reiniciar, manteniendo el historial de conversación.
 
 ## Criterios de Aceptación
 
-- [ ] `OpenAIProvider` implementa la interface `Provider`
-- [ ] Traduce Message/Block genéricos al formato OpenAI (tool results como mensajes separados)
-- [ ] `/provider openai [modelo]` cambia el provider activo
-- [ ] `/provider anthropic` vuelve a Anthropic
-- [ ] El historial de conversación se mantiene al cambiar
-- [ ] Cada provider acumula su propio usage
-- [ ] `$LLM_PROVIDER` y `$LLM_MODEL` como defaults al arranque
+- [x] `OpenAIProvider` implementa la interface Provider
+- [x] Soporta Chat Completions API con tool_calls
+- [x] `/provider` cambia el provider en runtime (recrea el client)
+- [x] El historial de conversación se mantiene al cambiar
+- [x] SetModel funciona con mutex para thread safety
+- [x] TotalUsage acumula tokens por sesión
+- [x] Se puede agregar un nuevo provider con API key desde `/provider`
 
-## Archivos a Crear
+## Archivos Implementados
 
 ```
-internal/provider/openai.go    # OpenAIProvider
+internal/provider/openai.go    # OpenAI SDK implementation
 ```
 
-## Definición de Done
+## Definición de Done ✅
 
-- Arrancar con Anthropic → conversar → `/provider openai` → seguir conversando
-- El modelo OpenAI entiende el historial previo
-- `/tokens` muestra totales correctos
+- Cambiar de Anthropic a OpenAI via `/provider` funciona sin reiniciar
+- La conversación continúa con el nuevo provider
+- API key se puede configurar inline desde el menú

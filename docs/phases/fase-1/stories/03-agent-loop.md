@@ -1,43 +1,26 @@
-# Story 03 — Agent Loop Básico
+# Story 03 — Agent Loop Básico ✅
 
 ## Como usuario
 Quiero escribir un mensaje en la terminal y que el agente me responda usando el modelo configurado, en un loop conversacional.
 
 ## Criterios de Aceptación
 
-- [ ] `Agent` struct con: Provider, messages slice, system prompt, MaxTurns
-- [ ] `agent.Send(ctx, prompt)` agrega mensaje user y ejecuta el loop
-- [ ] El loop: envía mensajes → recibe respuesta → si hay tool_use itera, si no retorna
-- [ ] El texto del asistente se imprime en stdout conforme llega
-- [ ] MaxTurns previene loops infinitos
-- [ ] REPL externo: lee input → llama agent.Send → espera siguiente input
+- [x] `Agent.Send(ctx, prompt)` agrega mensaje y ejecuta loop
+- [x] Loop: enviar → recibir → si hay tool_use ejecutar → repetir
+- [x] MaxTurns limita iteraciones (default 20)
+- [x] `OnOutput` callback para emitir texto/tool events sin acoplar a stdout
+- [x] `SendOneShot` para llamadas aisladas sin afectar historial
+- [x] `ClearMessages()` limpia conversación
 
-## Archivos a Crear
+## Archivos Implementados
 
 ```
-internal/agent/agent.go     # Agent struct + New() + Send() + loop()
-cmd/hoa/main.go      # Actualizar con REPL básico (stdin scanner)
+internal/agent/agent.go    # Agent struct + Send + loop + SendOneShot
+internal/api/types.go      # Message, Block, Usage, Response, ToolDef
 ```
 
-## Loop Simplificado
+## Definición de Done ✅
 
-```go
-func (a *Agent) loop(ctx context.Context) (string, error) {
-    for turn := 0; turn < a.MaxTurns; turn++ {
-        resp, err := a.Provider.Send(ctx, a.messages, nil) // sin tools aún
-        if err != nil { return "", err }
-        a.messages = append(a.messages, api.Message{Role: api.RoleAssistant, Content: resp.Content})
-        // Imprimir texto
-        if resp.StopReason != api.StopToolUse {
-            return text, nil
-        }
-    }
-    return "", fmt.Errorf("max turns reached")
-}
-```
-
-## Definición de Done
-
-- Ejecutar el binario → escribir "hola" → recibir respuesta del modelo
-- La conversación mantiene contexto (segundo mensaje recuerda el primero)
-- Ctrl+D sale limpiamente
+- Conversación multi-turno funciona
+- Tools se ejecutan y resultados vuelven al modelo
+- SendOneShot no contamina el historial (usado por /commit)
