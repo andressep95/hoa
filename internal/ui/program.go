@@ -3,12 +3,15 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/cloudcentinel/hoa/internal/command"
@@ -23,13 +26,15 @@ type asyncCmdDoneMsg struct{ result command.Result }
 
 // Model is the main Bubble Tea TUI model.
 type Model struct {
-	input   textinput.Model
-	spinner spinner.Model
+	input    textinput.Model
+	spinner  spinner.Model
+	renderer *glamour.TermRenderer
+	vp       viewport.Model
 
-	history  []string
+	lines    []string
 	cmdHist  []string
 	histIdx  int
-	scroll   int // scroll offset from bottom (0 = latest)
+	atBottom bool
 	thinking bool
 	width    int
 	height   int
@@ -56,7 +61,7 @@ type Model struct {
 func NewProgram(banner func() string, agentFn AgentSendFunc, cmdCtx *command.Context) (*tea.Program, func(string, string)) {
 	ch := make(chan outputMsg, 64)
 	m := newModel(banner, agentFn, cmdCtx, ch)
-	p := tea.NewProgram(m)
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	outputFn := func(kind, text string) {
 		ch <- outputMsg{kind, text}
@@ -75,16 +80,79 @@ func newModel(banner func() string, agentFn AgentSendFunc, cmdCtx *command.Conte
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
 
+	r, _ := glamour.NewTermRenderer(
+		glamour.WithStandardStyle(glamourStyle()),
+		glamour.WithWordWrap(100),
+	)
+
+	vp := viewport.New(80, 20)
+	vp.MouseWheelEnabled = true
+
 	return Model{
 		input:    ti,
 		spinner:  sp,
-		history:  []string{},
+		renderer: r,
+		vp:       vp,
+		lines:    []string{},
 		cmdHist:  []string{},
 		histIdx:  -1,
+		atBottom: true,
 		banner:   banner,
 		agentFn:  agentFn,
 		cmdCtx:   cmdCtx,
 		outputCh: ch,
+	}
+}
+
+func glamourStyle() string {
+	if s := os.Getenv("HOA_THEME"); s != "" {
+		return s
+	}
+	return "dark"
+}
+
+func newRenderer(width int) *glamour.TermRenderer {
+	wrap := width - 4
+	if wrap < 40 {
+		wrap = 40
+	}
+	r, _ := glamour.NewTermRenderer(
+		glamour.WithStandardStyle(glamourStyle()),
+		glamour.WithWordWrap(wrap),
+	)
+	return r
+}
+
+func (m *Model) calcViewportHeight() int {
+	if m.height == 0 {
+		return 20
+	}
+	ban := m.banner()
+	banH := strings.Count(ban, "\n") + 1
+	// Reserve: 1 separator after banner + 1 spinner + 1 input + 1 padding
+	h := m.height - banH - 4
+	if h < 5 {
+		h = 5
+	}
+	return h
+}
+
+func (m *Model) refreshViewport() {
+	content := strings.Join(m.lines, "\n")
+	m.vp.SetContent(content)
+
+	// Grow viewport with content up to the calculated max height.
+	// This keeps the input prompt near the content instead of pushing it
+	// to the very bottom of an empty full-height viewport.
+	maxH := m.calcViewportHeight()
+	h := len(m.lines)
+	if h > maxH {
+		h = maxH
+	}
+	m.vp.Height = h
+
+	if m.atBottom && h >= maxH {
+		m.vp.GotoBottom()
 	}
 }
 
@@ -99,14 +167,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.renderer = newRenderer(msg.Width)
+		m.vp.Width = msg.Width
+		m.vp.Height = m.calcViewportHeight()
+		m.refreshViewport()
 		return m, nil
 
+	case tea.MouseMsg:
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg)
+		m.atBottom = m.vp.AtBottom()
+		return m, cmd
+
 	case tea.KeyMsg:
-		// Menu mode
 		if m.menuActive {
 			return m.updateMenu(msg)
 		}
-		// Autocomplete mode — intercept navigation keys only
 		if m.acActive {
 			switch msg.String() {
 			case "down":
@@ -125,30 +201,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.acActive = false
 				return m, nil
 			case "enter":
-				// If autocomplete has a suggestion, execute it instead of the partial
 				if len(m.acItems) > 0 {
 					val := "/" + m.acItems[m.acCursor]
 					m.input.SetValue("")
 					m.acActive = false
 					m.histIdx = -1
 					m.cmdHist = append(m.cmdHist, val)
-					m.history = append(m.history, StylePrompt.Render("❯ ")+val)
+					m.appendLine(StylePrompt.Render("❯ ") + val)
+					m.appendLine("")
+					m.refreshViewport()
 					return m.executeCommand(val)
 				}
 				m.acActive = false
-				// Fall through to normal enter handling
 			case "esc":
 				m.acActive = false
 				return m, nil
 			default:
-				// Pass to input, then update suggestions
 				var cmd tea.Cmd
 				m.input, cmd = m.input.Update(msg)
 				m.updateAutocompleteState()
 				return m, cmd
 			}
 		}
-		// Thinking — only allow ctrl+c
 		if m.thinking {
 			if msg.String() == "ctrl+c" {
 				m.quitting = true
@@ -161,6 +235,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+
 		case "enter":
 			val := strings.TrimSpace(m.input.Value())
 			if val == "" {
@@ -170,8 +245,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.histIdx = -1
 			m.acActive = false
 			m.cmdHist = append(m.cmdHist, val)
-			m.history = append(m.history, StylePrompt.Render("❯ ")+val)
-
+			m.appendLine(StylePrompt.Render("❯ ") + val)
+			m.appendLine("")
+			m.atBottom = true
+			m.refreshViewport()
 			return m.executeCommand(val)
 
 		case "up":
@@ -201,22 +278,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input.CursorEnd()
 			return m, nil
 
-		case "pgup":
-			m.scroll += 10
-			max := len(m.history) - 5
-			if m.scroll > max {
-				m.scroll = max
-			}
-			if m.scroll < 0 {
-				m.scroll = 0
-			}
+		case "pgup", "ctrl+u":
+			m.vp.HalfPageUp()
+			m.atBottom = m.vp.AtBottom()
 			return m, nil
 
-		case "pgdown":
-			m.scroll -= 10
-			if m.scroll < 0 {
-				m.scroll = 0
-			}
+		case "pgdown", "ctrl+d":
+			m.vp.HalfPageDown()
+			m.atBottom = m.vp.AtBottom()
 			return m, nil
 		}
 
@@ -224,9 +293,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.drainOutput()
 		m.thinking = false
 		if msg.err != nil {
-			m.history = append(m.history, StyleError.Render("  error: "+msg.err.Error()))
+			m.appendLine(StyleError.Render("  error: " + msg.err.Error()))
 		}
-		m.history = append(m.history, "")
+		m.appendLine("")
+		m.atBottom = true
+		m.refreshViewport()
 		return m, nil
 
 	case asyncCmdDoneMsg:
@@ -234,7 +305,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result := msg.result
 		if len(result.Menu) > 0 {
 			if len(result.Lines) > 0 {
-				m.history = append(m.history, result.Lines...)
+				m.lines = append(m.lines, result.Lines...)
+				m.refreshViewport()
 			}
 			m.menuActive = true
 			m.menuTitle = result.Title
@@ -242,7 +314,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.menuCursor = 0
 			return m, nil
 		}
-		m.history = append(m.history, result.Lines...)
+		m.lines = append(m.lines, result.Lines...)
+		m.atBottom = true
+		m.refreshViewport()
 		return m, nil
 
 	case spinner.TickMsg:
@@ -251,11 +325,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	// Update text input
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
-
-	// Autocomplete trigger
 	m.updateAutocompleteState()
 
 	return m, cmd
@@ -293,23 +364,27 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			result := item.Action()
 			if result != "" {
 				for _, line := range strings.Split(result, "\n") {
-					m.history = append(m.history, StyleDim.Render("  ⎿  "+line))
+					m.appendLine(StyleDim.Render("  ⎿  " + line))
 				}
 			} else {
-				m.history = append(m.history, StyleDim.Render("  ⎿  "+item.Label))
+				m.appendLine(StyleDim.Render("  ⎿  " + item.Label))
 			}
-			m.history = append(m.history, "")
+			m.appendLine("")
+			m.atBottom = true
+			m.refreshViewport()
 		}
 	case "esc", "ctrl+c", "q":
 		m.menuActive = false
-		m.history = append(m.history, StyleDim.Render("  ⎿  cancelled"))
-		m.history = append(m.history, "")
+		m.appendLine(StyleDim.Render("  ⎿  cancelled"))
+		m.appendLine("")
+		m.atBottom = true
+		m.refreshViewport()
 		return m, nil
 	}
 	return m, nil
 }
 
-// ── Autocomplete handling (ghost text) ──────────────────────────────────────
+// ── Autocomplete handling ───────────────────────────────────────────────────
 
 func (m *Model) updateAutocompleteState() {
 	val := m.input.Value()
@@ -320,10 +395,8 @@ func (m *Model) updateAutocompleteState() {
 
 		var filtered []string
 		if prefix == "" {
-			// Show all commands on bare /
 			filtered = names
 		} else {
-			// Fuzzy: prefix match first, then substring
 			for _, n := range names {
 				if strings.HasPrefix(n, prefix) {
 					filtered = append(filtered, n)
@@ -336,7 +409,6 @@ func (m *Model) updateAutocompleteState() {
 					}
 				}
 			}
-			// Exact match — hide autocomplete
 			if len(filtered) == 1 && filtered[0] == prefix {
 				m.acActive = false
 				m.acItems = nil
@@ -358,10 +430,14 @@ func (m *Model) updateAutocompleteState() {
 	m.acCursor = 0
 }
 
+// ── Content helpers ──────────────────────────────────────────────────────────
 
-// ── Other ───────────────────────────────────────────────────────────────────
+func (m *Model) appendLine(line string) {
+	m.lines = append(m.lines, line)
+}
 
-// executeCommand dispatches a slash command and handles the result.
+// ── Command dispatch ─────────────────────────────────────────────────────────
+
 func (m Model) executeCommand(val string) (tea.Model, tea.Cmd) {
 	if result, handled := command.Dispatch(m.cmdCtx, val); handled {
 		if result.Quit {
@@ -369,13 +445,14 @@ func (m Model) executeCommand(val string) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if result.ClearScreen {
-			m.history = m.history[:0]
-			m.scroll = 0
+			m.lines = m.lines[:0]
+			m.vp.SetContent("")
 			return m, tea.ClearScreen
 		}
 		if result.AsyncFn != nil {
 			if len(result.Lines) > 0 {
-				m.history = append(m.history, result.Lines...)
+				m.lines = append(m.lines, result.Lines...)
+				m.refreshViewport()
 			}
 			m.thinking = true
 			fn := result.AsyncFn
@@ -385,7 +462,8 @@ func (m Model) executeCommand(val string) (tea.Model, tea.Cmd) {
 		}
 		if len(result.Menu) > 0 {
 			if len(result.Lines) > 0 {
-				m.history = append(m.history, result.Lines...)
+				m.lines = append(m.lines, result.Lines...)
+				m.refreshViewport()
 			}
 			m.menuActive = true
 			m.menuTitle = result.Title
@@ -393,11 +471,12 @@ func (m Model) executeCommand(val string) (tea.Model, tea.Cmd) {
 			m.menuCursor = 0
 			return m, nil
 		}
-		m.history = append(m.history, result.Lines...)
-		m.history = append(m.history, "") // spacing
+		m.lines = append(m.lines, result.Lines...)
+		m.appendLine("")
+		m.atBottom = true
+		m.refreshViewport()
 		return m, nil
 	}
-	// Not a command — send to agent
 	m.thinking = true
 	return m, m.runAgent(val)
 }
@@ -408,14 +487,35 @@ func (m *Model) drainOutput() {
 		case o := <-m.outputCh:
 			switch o.kind {
 			case "tool":
-				m.history = append(m.history, StyleTool.Render("  [tool] "+o.text))
+				m.appendLine(StyleTool.Render("  [tool] " + o.text))
+			case "memory-item":
+				m.appendLine(StyleDim.Render("  ⎿  " + o.text))
+			case "text":
+				m.appendMarkdown(o.text)
 			default:
-				m.history = append(m.history, "  "+o.text)
+				for _, line := range strings.Split(o.text, "\n") {
+					m.appendLine("  " + line)
+				}
 			}
+			m.refreshViewport()
 		default:
 			return
 		}
 	}
+}
+
+func (m *Model) appendMarkdown(text string) {
+	rendered := text
+	if m.renderer != nil {
+		if out, err := m.renderer.Render(text); err == nil {
+			rendered = out
+		}
+	}
+	rendered = strings.TrimRight(rendered, "\n")
+	for _, line := range strings.Split(rendered, "\n") {
+		m.appendLine(line)
+	}
+	m.appendLine("")
 }
 
 func (m Model) runAgent(input string) tea.Cmd {
@@ -425,7 +525,7 @@ func (m Model) runAgent(input string) tea.Cmd {
 	}
 }
 
-// ── View ────────────────────────────────────────────────────────────────────
+// ── View ─────────────────────────────────────────────────────────────────────
 
 func (m Model) View() string {
 	if m.quitting {
@@ -437,38 +537,21 @@ func (m Model) View() string {
 	sb.WriteString(ban)
 	sb.WriteString("\n")
 
-	// History viewport
-	viewportH := m.height - strings.Count(ban, "\n") - 6
-	if viewportH < 10 {
-		viewportH = 20
-	}
-	end := len(m.history) - m.scroll
-	if end < 0 {
-		end = 0
-	}
-	start := end - viewportH
-	if start < 0 {
-		start = 0
-	}
-	for _, line := range m.history[start:end] {
-		sb.WriteString(line)
+	if m.vp.Height > 0 {
+		sb.WriteString(m.vp.View())
 		sb.WriteString("\n")
 	}
 
-	// Menu overlay
 	if m.menuActive {
 		sb.WriteString(m.renderMenu())
 	}
 
-	// Spinner
 	if m.thinking {
 		sb.WriteString(fmt.Sprintf("  %s pensando...\n", m.spinner.View()))
 	}
 
-	// Input
 	sb.WriteString(m.input.View())
 
-	// Autocomplete dropdown
 	if m.acActive && !m.menuActive {
 		sb.WriteString("\n")
 		for i, item := range m.acItems {
@@ -506,5 +589,3 @@ func (m Model) renderMenu() string {
 	sb.WriteString("\n" + StyleDim.Render("  Enter confirmar · Esc cancelar") + "\n")
 	return sb.String()
 }
-
-
