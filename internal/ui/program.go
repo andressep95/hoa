@@ -267,20 +267,28 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
 		for i := m.menuCursor - 1; i >= 0; i-- {
-			if m.menuItems[i].Action != nil {
+			if m.menuItems[i].Action != nil || m.menuItems[i].AsyncAction != nil {
 				m.menuCursor = i
 				break
 			}
 		}
 	case "down", "j":
 		for i := m.menuCursor + 1; i < len(m.menuItems); i++ {
-			if m.menuItems[i].Action != nil {
+			if m.menuItems[i].Action != nil || m.menuItems[i].AsyncAction != nil {
 				m.menuCursor = i
 				break
 			}
 		}
 	case "enter":
 		item := m.menuItems[m.menuCursor]
+		m.menuActive = false
+		if item.AsyncAction != nil {
+			m.thinking = true
+			fn := item.AsyncAction
+			return m, func() tea.Msg {
+				return asyncCmdDoneMsg{result: fn()}
+			}
+		}
 		if item.Action != nil {
 			result := item.Action()
 			if result != "" {
@@ -292,9 +300,10 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.history = append(m.history, "")
 		}
-		m.menuActive = false
 	case "esc", "ctrl+c", "q":
 		m.menuActive = false
+		m.history = append(m.history, StyleDim.Render("  ⎿  cancelled"))
+		m.history = append(m.history, "")
 		return m, nil
 	}
 	return m, nil

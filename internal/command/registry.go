@@ -5,9 +5,10 @@ import "strings"
 
 // MenuItem represents one option in an interactive menu.
 type MenuItem struct {
-	Label  string
-	Hint   string
-	Action func() string // returns feedback text (empty = no feedback)
+	Label       string
+	Hint        string
+	Action      func() string // returns feedback text (empty = no feedback)
+	AsyncAction func() Result // if set, runs with spinner instead of Action
 }
 
 // Result holds the output of a command execution.
@@ -36,6 +37,15 @@ type Context struct {
 	ClearHist     func()
 	ToolNames     func() []string
 	AgentSend     func(prompt string) (string, error)
+
+	// Memory
+	MemoryEnabled func() bool
+	MemoryDSN     func() string
+	MemoryAPIKey  func() string
+	SetMemory     func(enabled bool)
+	SetMemoryDSN  func(dsn string)
+	SetMemoryKey  func(apiKey string)
+	PromptInput   func(label, placeholder string, mask bool) string
 }
 
 // Handler is a function that executes a slash command.

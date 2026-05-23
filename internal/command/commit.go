@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/cloudcentinel/hoa/internal/memory"
 )
 
 var (
@@ -170,7 +171,7 @@ func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) 
 		msg := commits[0].Message()
 		items = append(items, MenuItem{
 			Label:  "✓ Confirmar commit",
-			Action: func() string { return executeCommit(msg, commits[0].Files, sensitive) },
+			Action: func() string { return executeCommit(ctx, msg, commits[0].Files, sensitive) },
 		})
 	} else {
 		items = append(items, MenuItem{
@@ -178,7 +179,7 @@ func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) 
 			Action: func() string {
 				var results []string
 				for _, c := range commits {
-					results = append(results, executeCommit(c.Message(), c.Files, sensitive))
+					results = append(results, executeCommit(ctx, c.Message(), c.Files, sensitive))
 				}
 				return strings.Join(results, "\n")
 			},
@@ -186,7 +187,7 @@ func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) 
 		items = append(items, MenuItem{
 			Label: "⊕ Unificar en 1 solo commit",
 			Action: func() string {
-				return executeCommit(commits[0].Message(), nil, sensitive)
+				return executeCommit(ctx, commits[0].Message(), nil, sensitive)
 			},
 		})
 	}
@@ -207,7 +208,7 @@ func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) 
 	}
 }
 
-func executeCommit(msg string, files []string, sensitive []string) string {
+func executeCommit(ctx *Context, msg string, files []string, sensitive []string) string {
 	if errs := ValidateCommitMsg(msg); len(errs) > 0 {
 		return "❌ validación falló: " + errs[0]
 	}
@@ -235,7 +236,44 @@ func executeCommit(msg string, files []string, sensitive []string) string {
 	// Get the hash of the commit we just made
 	hash := gitRun("log", "-1", "--format=%h")
 	subject := gitRun("log", "-1", "--format=%s")
-	return hash + " " + subject
+
+	// Post-commit memory push
+	memFeedback := pushToMemory(ctx, hash)
+
+	result := hash + " " + subject
+	if memFeedback != "" {
+		result += "\n" + memFeedback
+	}
+	return result
+}
+
+func pushToMemory(ctx *Context, commitHash string) string {
+	if ctx.MemoryEnabled == nil || !ctx.MemoryEnabled() {
+		return ""
+	}
+	dsn := ctx.MemoryDSN()
+	apiKey := ctx.MemoryAPIKey()
+	if dsn == "" || apiKey == "" {
+		return ""
+	}
+	client, err := memory.NewClient(dsn, apiKey)
+	if err != nil {
+		return ""
+	}
+	defer client.Close()
+
+	res, err := memory.SyncOne(client, commitHash, ctx.AgentSend)
+	if err != nil {
+		return "  ⚠️  Memoria: error indexando"
+	}
+	if res.Inserted == 0 {
+		return ""
+	}
+	msg := fmt.Sprintf("  ⎿  Memoria: %d archivo(s) indexados en Oracle", res.Inserted)
+	if res.EnrichmentQueued > 0 {
+		msg += fmt.Sprintf(" (%d enriquecidos via LLM)", res.EnrichmentQueued)
+	}
+	return msg
 }
 
 func stripCodeFences(s string) string {

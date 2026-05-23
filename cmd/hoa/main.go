@@ -134,6 +134,24 @@ func main() {
 		AgentSend: func(prompt string) (string, error) {
 			return a.SendOneShot(context.Background(), prompt)
 		},
+
+		// Memory
+		MemoryEnabled: func() bool { return cfg.Memory.Enabled },
+		MemoryDSN:     func() string { return cfg.Memory.DSN },
+		MemoryAPIKey:  func() string { return cfg.Memory.APIKey },
+		SetMemory: func(enabled bool) {
+			cfg.Memory.Enabled = enabled
+			config.Save(cfg)
+		},
+		SetMemoryDSN: func(dsn string) {
+			cfg.Memory.DSN = dsn
+			config.Save(cfg)
+		},
+		SetMemoryKey: func(apiKey string) {
+			cfg.Memory.APIKey = apiKey
+			config.Save(cfg)
+		},
+		PromptInput: ui.RunInput,
 	}
 
 	prog, outputFn := ui.NewProgram(bannerFn, a.Send, cmdCtx)
