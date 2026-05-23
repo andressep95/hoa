@@ -1,0 +1,26 @@
+services:
+  oracle:
+    image: gvenzl/oracle-free:23.7-slim
+    container_name: oracle-23ai
+    restart: unless-stopped
+    ports:
+      - "1521:1521"
+    environment:
+      ORACLE_PASSWORD: Oracle23ai!
+      APP_USER: mcp_user
+      APP_USER_PASSWORD: Mcp_User23!
+      ORACLE_CHARACTERSET: AL32UTF8
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      # Scripts here run automatically on first start (fresh volume).
+      # To reload: docker compose down -v && docker compose up
+      - ./docker/oracle/init:/container-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
+volumes:
+  oracle-data:

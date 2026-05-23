@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white" alt="Go 1.23"/>
+  <img src="https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white" alt="Go 1.26"/>
   <img src="https://img.shields.io/badge/Status-Fase%201-blueviolet" alt="Fase 1"/>
   <img src="https://img.shields.io/badge/Providers-Anthropic%20%7C%20OpenAI-green" alt="Providers"/>
   <img src="https://img.shields.io/badge/License-MIT-yellow" alt="License"/>
@@ -22,37 +22,93 @@
 
 **HOA** es un coding agent de terminal construido sobre un paradigma nuevo: **Harness-Oriented Agents**.
 
-La premisa es simple: el modelo de IA es un commodity intercambiable. Lo que realmente importa es el **harness** — el sistema determinista que valida, controla y corrige al modelo. Si un error se repite, no se arregla el prompt: se arregla el harness.
+La premisa es simple: el modelo de IA es un commodity intercambiable. Lo que realmente importa es el **harness** — el sistema determinista que valida, controla y corrige al modelo.
 
 ```
 Agente = Modelo + Harness
 ```
 
-HOA te da control total sobre cómo el agente piensa, actúa y se corrige.
-
 ---
 
-## ✨ Features (Fase 1)
+## ✨ Features
 
-### 🔌 Multi-Provider con API Keys Directas
+### 🎨 TUI Completa (Bubble Tea)
 
-Cambia entre Anthropic y OpenAI sin reiniciar. API keys encriptadas con AES-256-GCM en disco.
+Interfaz de terminal con alt-screen, input con historial (↑/↓), viewport scrollable (PageUp/PageDown), spinner mientras piensa, y autocomplete de comandos con dropdown filtrable.
+
+### 🔌 Multi-Provider con Hot-Swap
+
+Cambia entre providers en runtime sin reiniciar. API keys encriptadas con AES-256-GCM.
 
 ```
 ❯ /provider
-  ▸ Anthropic (Claude)
-    OpenAI (GPT)
-    Ollama (local)
-    Google (Gemini)
+  anthropic    ✔ activo
+  openai       configurado
+  ───────────────────
+  ＋ Agregar ollama
+  ＋ Agregar google
+  ───────────────────
+  🔑 Cambiar API key de anthropic
 ```
 
-### 🧠 Modelo Dual: Planning + Ejecución
+### 🧠 Modelos y Modos
 
-Un modelo potente para planear (opus/o3), uno rápido para ejecutar (sonnet/gpt-4o). El harness decide cuál usar según la tarea.
+Selección interactiva de modelo con dos modos de operación:
+
+| Modo | Comportamiento |
+|------|---------------|
+| `execute` | Modelo base responde directo |
+| `plan+execute` | Planning model planea, base ejecuta |
+
+```
+❯ /model
+  🧠 anthropic · execute: claude-sonnet-4-6 · plan: claude-opus-4-7
+
+  ── execute ──
+    claude-sonnet-4-6  ✔
+    claude-opus-4-7
+    claude-haiku-4-5
+
+  ── planning ──
+    claude-sonnet-4-6
+    claude-opus-4-7  ✔
+    claude-haiku-4-5
+```
+
+### 📝 /commit — Commits Inteligentes con LLM
+
+El agente analiza tu diff, genera mensajes Conventional Commits en JSON estructurado, propone splits si detecta cambios no relacionados, y ejecuta con confirmación:
+
+```
+❯ /commit
+  ⎿  Analizando cambios...
+
+  [1/2] feat(agent): add SendOneShot for isolated LLM calls
+    what: Adds SendOneShot to use LLM without conversation history
+    why:  Enables one-time operations without altering session state
+    breaking: false
+    ⎿  internal/agent/agent.go
+
+  [2/2] refactor(ui): pass banner as lazy func
+    what: Banner re-evaluates on each render for live state
+    why:  Static banner was stale after model or mode changes
+    breaking: false
+    ⎿  internal/ui/program.go
+
+  ✓ Commitear 2 commits separados
+  ⊕ Unificar en 1 solo commit
+  ✎ Dar feedback (regenerar)
+  ✗ Cancelar
+```
+
+Incluye validación pre-commit (Conventional Commits), detección de archivos sensibles, y feedback con hash:
+
+```
+  ⎿  a1b2c3d feat(agent): add SendOneShot for isolated LLM calls
+  ⎿  e4f5g6h refactor(ui): pass banner as lazy func
+```
 
 ### 🛠️ Tools Integradas
-
-El agente puede actuar sobre tu filesystem:
 
 | Tool | Descripción |
 |------|-------------|
@@ -61,13 +117,28 @@ El agente puede actuar sobre tu filesystem:
 | `grep` | Búsqueda regex en archivos |
 | `glob` | Buscar archivos por patrón |
 
-### 🔐 Config Encriptada
+### 💰 Cost Tracking
 
-API keys nunca en plaintext en disco. Master key en `~/.hoa/keyring` con permisos `0600`.
+```
+❯ /tokens
+  tokens: 1250 in · 340 out · 1590 total
+  costo:  $0.0089 (estimado)
+  modelo: claude-sonnet-4-6
+```
 
-### 🎨 TUI con Bubble Tea
+### ⚡ Slash Commands
 
-Wizard de configuración con selectores de flechas. Banner estilizado. Prompt coloreado.
+| Comando | Descripción |
+|---------|-------------|
+| `/mode` | Alterna execute / plan+execute |
+| `/model` | Selecciona modelo (menú interactivo) |
+| `/provider` | Cambia provider / agrega nuevo / modifica API key |
+| `/tokens` | Muestra tokens y costo estimado |
+| `/commit` | Commit inteligente con LLM |
+| `/memory` | Gestiona memoria persistente (placeholder) |
+| `/tools` | Lista herramientas disponibles |
+| `/clear` | Limpia historial |
+| `/exit` | Salir |
 
 ---
 
@@ -76,111 +147,68 @@ Wizard de configuración con selectores de flechas. Banner estilizado. Prompt co
 ```bash
 git clone https://github.com/cloudcentinel/hoa.git
 cd hoa
-export ANTHROPIC_API_KEY=sk-ant-...   # o OPENAI_API_KEY=sk-...
-go run ./cmd/hoa
+go build -o hoa ./cmd/hoa
+./hoa
 ```
 
-Primera ejecución → wizard interactivo te guía. Después arranca directo.
+Primera ejecución → wizard interactivo configura provider, modelo y memoria opcional.
 
-```
-  ██╗  ██╗ ██████╗  █████╗ 
-  ██║  ██║██╔═══██╗██╔══██╗
-  ███████║██║   ██║███████║
-  ██╔══██║██║   ██║██╔══██║
-  ██║  ██║╚██████╔╝██║  ██║
-  ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝
-  Harness-Oriented Agents
-
-  provider: anthropic
-  base: claude-sonnet-4-20250514
-  planning: claude-opus-4-20250414
-
-  /help para comandos · /exit para salir
-
-❯ lista los archivos .go del proyecto
-[tool] glob
-...
-```
+Variables de entorno soportadas (override config):
+- `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL`
+- `OPENAI_API_KEY` / `OPENAI_MODEL`
 
 ---
 
 ## 📐 Arquitectura
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  cmd/hoa/main.go       REPL + banner + commands     │
-└─────────────────────────────────────────────────────┘
-        │
-        ├── internal/api/          Tipos genéricos (Message, Block, ToolDef)
-        │
-        ├── internal/provider/     Interface Provider + Anthropic + OpenAI
-        │
-        ├── internal/agent/        Agent loop (Send → model → tools → repeat)
-        │
-        ├── internal/tool/         Registry auto-registrante + bash/read/grep/glob
-        │
-        ├── internal/config/       Load/Save + AES-256-GCM + Wizard
-        │
-        └── internal/ui/           Selector + TextInput (Bubble Tea)
-```
+cmd/hoa/main.go              Entry point + wiring
 
-### El Agent Loop
-
-```
-[tu input]
-    │
-    ▼
-[agregar a messages]
-    │
-    ▼
-[llamar al modelo con tools] ──┐
-    │                          │
-    ▼                          │
-[¿hay tool_use?] ──no─────────┴──▶ [imprimir respuesta]
-    │
-   sí
-    │
-    ▼
-[ejecutar herramientas]
-    │
-    ▼
-[agregar tool_results]
-    │
-    ▼
-(volver a llamar al modelo)
+internal/
+├── agent/agent.go           Agent loop (Send → model → tools → repeat)
+├── api/types.go             Tipos genéricos (Message, Block, Usage)
+├── command/                  Slash commands (1 archivo por comando)
+│   ├── registry.go          Dispatch + Context
+│   ├── commit.go            /commit con LLM + validación
+│   ├── model.go             /model selector
+│   ├── provider.go          /provider con setup
+│   ├── mode.go              /mode toggle
+│   ├── tokens.go            /tokens + cost
+│   ├── validate.go          Pre-commit validation
+│   └── ...
+├── config/                   Load/Save + AES-256-GCM + Wizard
+├── cost/tracker.go          Per-model cost estimation
+├── provider/                 Interface + Anthropic + OpenAI
+├── tool/                     Registry + bash/read/grep/glob
+└── ui/
+    ├── program.go           Bubble Tea main model
+    ├── styles.go            Lipgloss styles centralizados
+    ├── textinput.go         Input component
+    └── selector.go          Selector component
 ```
 
 ---
 
-## 🗺️ Roadmap
+## 🗺️ Roadmap — Fase 1
 
-### Fase 1 — Core Agent ✅ (actual)
-- [x] Config con wizard TUI + encriptación
-- [x] Provider Interface (Anthropic + OpenAI)
-- [x] Agent Loop con tool execution
-- [x] Tools: bash, read_file, grep, glob
-- [x] Banner + REPL estilizado
-
-### Fase 1B — Harness Layer (próximo)
-- [ ] Write file + diff approval
-- [ ] Slash commands: /provider, /model con selectores
-- [ ] Compaction strategies (SlidingWindow, Summarize)
-- [ ] Dual-model router (planning vs execution)
-- [ ] SDD Engine (Spec-Driven Development)
-- [ ] Write-Verify Loop (L0-L5)
-- [ ] Commit tool con amnesia
-
-### Fase 1C — Memory & Intelligence
-- [ ] Memory persistente entre sesiones
-- [ ] Oracle 23ai vector store
-- [ ] Subagent research (delegación read-only)
-- [ ] Eliminación categórica de errores
-
-### Fase 2 — Skills
-- [ ] Skill template (YAML canónico)
-- [ ] Skill discovery pre-LLM (LIKE + vector)
-- [ ] Context injection por task (breadcrumbs del planner)
-- [ ] Skill creator (/skill create)
+| # | Story | Estado |
+|---|-------|--------|
+| 01 | Config y Primer Uso | ✅ |
+| 02 | Provider Interface + Anthropic | ✅ |
+| 03 | Agent Loop Básico | ✅ |
+| 04 | Tool Registry + Tools Read-Only | ✅ |
+| 05 | TUI con Bubble Tea | ✅ |
+| 06 | Slash Commands | ✅ |
+| 07 | Write File + Diff Approval | ⬜ |
+| 08 | Provider OpenAI + Swap en Runtime | ✅ |
+| 09 | Compaction Strategies | ⬜ |
+| 10 | Dual-Model Router | ⬜ (switch listo, lógica pendiente) |
+| 11 | SDD Engine | ⬜ |
+| 12 | Write-Verify Loop | ⬜ |
+| 13 | Commit con Amnesia | ⬜ |
+| 14 | Memory Persistente | ⬜ (config listo, Oracle pendiente) |
+| 15 | Subagent Research | ⬜ |
+| 16 | Debug Panel | ⬜ |
 
 ---
 
@@ -188,36 +216,15 @@ Primera ejecución → wizard interactivo te guía. Después arranca directo.
 
 | Principio | Descripción |
 |-----------|-------------|
-| **El harness manda** | Si el agente falla repetidamente, se arregla el harness, no se reza |
-| **Verificación determinista** | El harness valida, no el modelo. Write → Verify → Accept/Rollback |
-| **Amnesia controlada** | Post-commit se limpia el contexto. Solo lo relevante sobrevive |
-| **Multi-proveedor** | Cambiar de Claude a GPT-4o a Ollama es configuración, no refactor |
-| **Eliminación categórica** | Errores repetidos se convierten en reglas preventivas |
-| **Progressive Disclosure** | Solo inyectar al modelo lo que la tarea necesita |
-| **Skills como marco** | El agente sabe CÓMO hacer las cosas, no solo QUÉ hacer |
+| **El harness manda** | Si el agente falla, se arregla el harness, no el prompt |
+| **Verificación determinista** | Write → Verify → Accept/Rollback |
+| **Amnesia controlada** | Post-commit se limpia el contexto |
+| **Multi-proveedor** | Cambiar de Claude a GPT es configuración |
+| **Skills como marco** | El agente sabe CÓMO hacer las cosas |
 
 ---
 
-## 🛠️ Requisitos
-
-- Go 1.23+
-- Una API key: [Anthropic](https://console.anthropic.com) o [OpenAI](https://platform.openai.com)
-
----
-
-## 📄 Documentación
-
-| Doc | Descripción |
-|-----|-------------|
-| [INDEX.md](INDEX.md) | Mapa del proyecto |
-| [Fase 1](docs/phases/fase-1/README.md) | Arquitectura y decisiones |
-| [Stories](docs/phases/fase-1/stories/) | Historias de usuario paso a paso |
-| [Harnesses](docs/sections/harnesses.md) | Catálogo de harnesses |
-| [Skills](docs/sections/skills.md) | Sistema de skills + template |
-
----
-
-## 📝 Licencia
+## 📄 Licencia
 
 MIT
 
