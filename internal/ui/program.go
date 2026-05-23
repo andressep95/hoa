@@ -33,7 +33,7 @@ type Model struct {
 	thinking bool
 	width    int
 	height   int
-	banner   string
+	banner   func() string
 
 	agentFn  AgentSendFunc
 	cmdCtx   *command.Context
@@ -53,7 +53,7 @@ type Model struct {
 }
 
 // NewProgram creates the Bubble Tea program and returns an output function for the agent.
-func NewProgram(banner string, agentFn AgentSendFunc, cmdCtx *command.Context) (*tea.Program, func(string, string)) {
+func NewProgram(banner func() string, agentFn AgentSendFunc, cmdCtx *command.Context) (*tea.Program, func(string, string)) {
 	ch := make(chan outputMsg, 64)
 	m := newModel(banner, agentFn, cmdCtx, ch)
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -65,7 +65,7 @@ func NewProgram(banner string, agentFn AgentSendFunc, cmdCtx *command.Context) (
 	return p, outputFn
 }
 
-func newModel(banner string, agentFn AgentSendFunc, cmdCtx *command.Context, ch chan outputMsg) Model {
+func newModel(banner func() string, agentFn AgentSendFunc, cmdCtx *command.Context, ch chan outputMsg) Model {
 	ti := textinput.New()
 	ti.Prompt = StylePrompt.Render("❯ ")
 	ti.Focus()
@@ -125,6 +125,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.acActive = false
 				return m, nil
 			case "enter":
+				// If autocomplete has a suggestion, execute it instead of the partial
+				if len(m.acItems) > 0 {
+					val := "/" + m.acItems[m.acCursor]
+					m.input.SetValue("")
+					m.acActive = false
+					m.histIdx = -1
+					m.cmdHist = append(m.cmdHist, val)
+					m.history = append(m.history, StylePrompt.Render("❯ ")+val)
+					return m.executeCommand(val)
+				}
 				m.acActive = false
 				// Fall through to normal enter handling
 			case "esc":
@@ -147,16 +157,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		// Ghost text: Tab accepts completion
-		if m.acActive && (msg.String() == "tab" || msg.String() == "right") {
-			if len(m.acItems) > 0 {
-				m.input.SetValue("/" + m.acItems[0])
-				m.input.CursorEnd()
-				m.acActive = false
-				return m, nil
-			}
-		}
-
 		switch msg.String() {
 		case "ctrl+c":
 			m.quitting = true
@@ -172,39 +172,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cmdHist = append(m.cmdHist, val)
 			m.history = append(m.history, StylePrompt.Render("❯ ")+val)
 
-			// Dispatch slash commands
-			if result, handled := command.Dispatch(m.cmdCtx, val); handled {
-				if result.Quit {
-					m.quitting = true
-					return m, tea.Quit
-				}
-				if result.AsyncFn != nil {
-					if len(result.Lines) > 0 {
-						m.history = append(m.history, result.Lines...)
-					}
-					m.thinking = true
-					fn := result.AsyncFn
-					return m, func() tea.Msg {
-						r := fn()
-						return asyncCmdDoneMsg{result: r}
-					}
-				}
-				if len(result.Menu) > 0 {
-					if len(result.Lines) > 0 {
-						m.history = append(m.history, result.Lines...)
-					}
-					m.menuActive = true
-					m.menuTitle = result.Title
-					m.menuItems = result.Menu
-					m.menuCursor = 0
-					return m, nil
-				}
-				m.history = append(m.history, result.Lines...)
-				return m, nil
-			}
-
-			m.thinking = true
-			return m, m.runAgent(val)
+			return m.executeCommand(val)
 
 		case "up":
 			if len(m.cmdHist) == 0 {
@@ -315,15 +283,12 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		item := m.menuItems[m.menuCursor]
 		if item.Action != nil {
 			item.Action()
-			m.history = append(m.history,
-				StylePrompt.Render(fmt.Sprintf("  Set model to %s", m.cmdCtx.GetModel())),
-				StyleDim.Render(fmt.Sprintf("    planning: %s", m.cmdCtx.GetPlanModel())),
-			)
+			m.history = append(m.history, StyleDim.Render("  ⎿  "+item.Label), "")
 		}
 		m.menuActive = false
 	case "esc", "ctrl+c", "q":
-		m.history = append(m.history, StyleDim.Render("  cancelado"))
 		m.menuActive = false
+		return m, nil
 	}
 	return m, nil
 }
@@ -380,6 +345,42 @@ func (m *Model) updateAutocompleteState() {
 
 // ── Other ───────────────────────────────────────────────────────────────────
 
+// executeCommand dispatches a slash command and handles the result.
+func (m Model) executeCommand(val string) (tea.Model, tea.Cmd) {
+	if result, handled := command.Dispatch(m.cmdCtx, val); handled {
+		if result.Quit {
+			m.quitting = true
+			return m, tea.Quit
+		}
+		if result.AsyncFn != nil {
+			if len(result.Lines) > 0 {
+				m.history = append(m.history, result.Lines...)
+			}
+			m.thinking = true
+			fn := result.AsyncFn
+			return m, func() tea.Msg {
+				return asyncCmdDoneMsg{result: fn()}
+			}
+		}
+		if len(result.Menu) > 0 {
+			if len(result.Lines) > 0 {
+				m.history = append(m.history, result.Lines...)
+			}
+			m.menuActive = true
+			m.menuTitle = result.Title
+			m.menuItems = result.Menu
+			m.menuCursor = 0
+			return m, nil
+		}
+		m.history = append(m.history, result.Lines...)
+		m.history = append(m.history, "") // spacing
+		return m, nil
+	}
+	// Not a command — send to agent
+	m.thinking = true
+	return m, m.runAgent(val)
+}
+
 func (m *Model) drainOutput() {
 	for {
 		select {
@@ -411,11 +412,12 @@ func (m Model) View() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(m.banner)
+	ban := m.banner()
+	sb.WriteString(ban)
 	sb.WriteString("\n")
 
 	// History viewport
-	viewportH := m.height - strings.Count(m.banner, "\n") - 6
+	viewportH := m.height - strings.Count(ban, "\n") - 6
 	if viewportH < 10 {
 		viewportH = 20
 	}
