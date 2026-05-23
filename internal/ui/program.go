@@ -56,7 +56,7 @@ type Model struct {
 func NewProgram(banner func() string, agentFn AgentSendFunc, cmdCtx *command.Context) (*tea.Program, func(string, string)) {
 	ch := make(chan outputMsg, 64)
 	m := newModel(banner, agentFn, cmdCtx, ch)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 
 	outputFn := func(kind, text string) {
 		ch <- outputMsg{kind, text}
