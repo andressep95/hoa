@@ -2,5 +2,5 @@ package command
 
 func cmdClear(ctx *Context, _ string) Result {
 	ctx.ClearHist()
-	return Result{Lines: []string{"  Historial limpiado."}}
+	return Result{ClearScreen: true}
 }

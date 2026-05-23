@@ -13,11 +13,12 @@ type MenuItem struct {
 
 // Result holds the output of a command execution.
 type Result struct {
-	Lines   []string
-	Menu    []MenuItem // if non-nil, TUI shows interactive menu
-	Title   string     // menu title
-	Quit    bool
-	AsyncFn func() Result // if set, TUI runs this in background with spinner
+	Lines       []string
+	Menu        []MenuItem // if non-nil, TUI shows interactive menu
+	Title       string     // menu title
+	Quit        bool
+	ClearScreen bool      // if true, TUI clears history and resets view
+	AsyncFn     func() Result // if set, TUI runs this in background with spinner
 }
 
 // Context provides commands access to the runtime state.

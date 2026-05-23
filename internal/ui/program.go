@@ -368,6 +368,11 @@ func (m Model) executeCommand(val string) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		}
+		if result.ClearScreen {
+			m.history = m.history[:0]
+			m.scroll = 0
+			return m, tea.ClearScreen
+		}
 		if result.AsyncFn != nil {
 			if len(result.Lines) > 0 {
 				m.history = append(m.history, result.Lines...)
