@@ -14,13 +14,21 @@ import (
 // OutputFunc is called by the agent to emit text or tool events.
 type OutputFunc func(kind string, text string)
 
+// WorkingContextFunc returns context from uncommitted changes.
+type WorkingContextFunc func() string
+
+// MemorySearchFunc searches project memory and returns formatted context.
+type MemorySearchFunc func(query string) string
+
 // Agent owns one conversation: a provider, tools, and a message history.
 type Agent struct {
-	Provider provider.Provider
-	Tools    *tool.Registry
-	System   string
-	MaxTurns int
-	OnOutput OutputFunc
+	Provider       provider.Provider
+	Tools          *tool.Registry
+	System         string
+	MaxTurns       int
+	OnOutput       OutputFunc
+	MemorySearch   MemorySearchFunc
+	WorkingContext WorkingContextFunc
 
 	messages []api.Message
 }
@@ -38,9 +46,30 @@ func New(p provider.Provider, system string, tools *tool.Registry) *Agent {
 
 // Send appends a user message and runs the loop until the model stops.
 func (a *Agent) Send(ctx context.Context, prompt string) (string, error) {
+	var contextParts []string
+
+	// 1. Working context (uncommitted changes — most relevant)
+	if a.WorkingContext != nil {
+		if wc := a.WorkingContext(); wc != "" {
+			contextParts = append(contextParts, wc)
+		}
+	}
+
+	// 2. Memory context (Oracle — historical relevance)
+	if a.MemorySearch != nil {
+		if mc := a.MemorySearch(prompt); mc != "" {
+			contextParts = append(contextParts, mc)
+		}
+	}
+
+	fullPrompt := prompt
+	if len(contextParts) > 0 {
+		fullPrompt = strings.Join(contextParts, "\n\n") + "\n\n" + prompt
+	}
+
 	a.messages = append(a.messages, api.Message{
 		Role:    api.RoleUser,
-		Content: []api.Block{{Type: api.BlockText, Text: prompt}},
+		Content: []api.Block{{Type: api.BlockText, Text: fullPrompt}},
 	})
 	return a.loop(ctx)
 }

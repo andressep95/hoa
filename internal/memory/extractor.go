@@ -64,6 +64,42 @@ var docExts = map[string]bool{
 var hunkHeaderRe = regexp.MustCompile(`@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,(\d+))?\s+@@(.*)`)
 var commitTypeRe = regexp.MustCompile(`^(\w+)(?:\(([\w/.\-]+)\))?:`)
 
+var ignorePatterns = []string{
+	"go.sum", "go.mod", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+	"Cargo.lock", "composer.lock", "Gemfile.lock", "poetry.lock",
+	".DS_Store", "thumbs.db",
+}
+
+var ignoreExtensions = map[string]bool{
+	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".ico": true,
+	".svg": true, ".woff": true, ".woff2": true, ".ttf": true, ".eot": true,
+	".mp3": true, ".mp4": true, ".zip": true, ".tar": true, ".gz": true,
+	".min.js": true, ".min.css": true, ".map": true,
+	".pb.go": true, ".generated.go": true,
+}
+
+var ignorePrefixes = []string{"dist/", "build/", "node_modules/", "vendor/", ".git/"}
+
+func shouldIgnore(path string) bool {
+	base := filepath.Base(path)
+	for _, p := range ignorePatterns {
+		if base == p {
+			return true
+		}
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	if ignoreExtensions[ext] {
+		return true
+	}
+	lower := strings.ToLower(path)
+	for _, prefix := range ignorePrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // RepoName returns the current git repository folder name.
 func RepoName() string {
 	top := gitCmd("rev-parse", "--show-toplevel")
@@ -100,6 +136,9 @@ func Extract(ref string) (string, []Entry, error) {
 
 	entries := make([]Entry, 0, len(files))
 	for _, file := range files {
+		if shouldIgnore(file) {
+			continue
+		}
 		lang := detectLanguage(file)
 		kind := memoryKind(file)
 

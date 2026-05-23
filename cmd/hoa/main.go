@@ -9,6 +9,7 @@ import (
 	"github.com/cloudcentinel/hoa/internal/agent"
 	"github.com/cloudcentinel/hoa/internal/command"
 	"github.com/cloudcentinel/hoa/internal/config"
+	"github.com/cloudcentinel/hoa/internal/memory"
 	"github.com/cloudcentinel/hoa/internal/provider"
 	"github.com/cloudcentinel/hoa/internal/tool"
 	"github.com/cloudcentinel/hoa/internal/ui"
@@ -44,6 +45,25 @@ func main() {
 
 	llm := newProvider(cfg)
 	a := agent.New(llm, systemPrompt, tool.Default)
+
+	// Wire memory search if enabled
+	if cfg.Memory.Enabled && cfg.Memory.DSN != "" && cfg.Memory.APIKey != "" {
+		a.MemorySearch = func(query string) string {
+			mc, err := memory.NewClient(cfg.Memory.DSN, cfg.Memory.APIKey)
+			if err != nil {
+				return ""
+			}
+			defer mc.Close()
+			results, err := memory.Search(mc, query, 5)
+			if err != nil || len(results) == 0 {
+				return ""
+			}
+			return memory.FormatContext(results)
+		}
+	}
+
+	// Working context — always active (uses git directly)
+	a.WorkingContext = memory.WorkingContext
 
 	mode := cfg.Harness.Mode
 	if mode == "" {
