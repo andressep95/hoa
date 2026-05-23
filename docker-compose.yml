@@ -15,6 +15,7 @@ services:
       # Scripts here run automatically on first start (fresh volume).
       # To reload: docker compose down -v && docker compose up
       - ./docker/oracle/init:/container-entrypoint-initdb.d:ro
+      - ./docker/oracle/models:/opt/oracle/models:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh"]
       interval: 30s
