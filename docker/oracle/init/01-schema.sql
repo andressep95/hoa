@@ -329,3 +329,38 @@ COMMENT ON COLUMN HOA.documents.stale              IS '1 = potentially outdated 
 
 COMMENT ON TABLE  HOA.document_sections            IS 'Individual sections of a document with their own embedding for granular RAG retrieval by heading.';
 COMMENT ON COLUMN HOA.document_sections.position   IS 'Section order within the document (0-based).';
+
+
+-- ============================================================
+-- FEEDBACK_RULES
+-- ============================================================
+CREATE TABLE HOA.feedback_rules (
+    id              RAW(16)                  DEFAULT SYS_GUID() NOT NULL,
+    project_id      RAW(16)                  NOT NULL,
+    rule            VARCHAR2(1000)           NOT NULL,
+    why             VARCHAR2(1000),
+    scope           VARCHAR2(500),
+    active          NUMBER(1)                DEFAULT 1 NOT NULL,
+    superseded_by   RAW(16),
+    embedding       VECTOR(384, FLOAT32),
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
+    CONSTRAINT pk_feedback_rules           PRIMARY KEY (id),
+    CONSTRAINT fk_feedback_rules_project   FOREIGN KEY (project_id) REFERENCES HOA.projects (id),
+    CONSTRAINT fk_feedback_rules_supersede FOREIGN KEY (superseded_by) REFERENCES HOA.feedback_rules (id),
+    CONSTRAINT ck_feedback_rules_active    CHECK (active IN (0, 1))
+);
+
+CREATE INDEX HOA.idx_feedback_rules_project ON HOA.feedback_rules (project_id, active);
+
+CREATE VECTOR INDEX HOA.vidx_feedback_rules_embedding
+    ON HOA.feedback_rules (embedding)
+    ORGANIZATION NEIGHBOR PARTITIONS
+    WITH DISTANCE COSINE
+    WITH TARGET ACCURACY 95;
+
+COMMENT ON TABLE  HOA.feedback_rules          IS 'User corrections and guidance that evolve over time. Active rules are injected into LLM context when semantically relevant.';
+COMMENT ON COLUMN HOA.feedback_rules.rule     IS 'The rule itself: what to do or not do.';
+COMMENT ON COLUMN HOA.feedback_rules.why      IS 'Reason behind the rule — helps LLM judge edge cases.';
+COMMENT ON COLUMN HOA.feedback_rules.scope    IS 'File path pattern where this applies (NULL = global).';
+COMMENT ON COLUMN HOA.feedback_rules.active   IS '1 = enforced, 0 = superseded/disabled.';
+COMMENT ON COLUMN HOA.feedback_rules.superseded_by IS 'Points to the newer rule that replaced this one.';

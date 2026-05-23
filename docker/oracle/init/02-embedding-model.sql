@@ -106,3 +106,21 @@ EXCEPTION
   WHEN OTHERS THEN NULL;
 END;
 /
+
+
+-- ── Trigger: auto-generate embedding on feedback_rules ──────────────────────
+
+CREATE OR REPLACE TRIGGER TRG_FEEDBACK_RULES_EMBEDDING
+BEFORE INSERT OR UPDATE ON feedback_rules
+FOR EACH ROW
+DECLARE
+  v_text VARCHAR2(4000);
+BEGIN
+  v_text := SUBSTR(:NEW.rule || ' ' || NVL(:NEW.why, '') || ' ' || NVL(:NEW.scope, ''), 1, 4000);
+  SELECT VECTOR_EMBEDDING(HOA_EMBED_MODEL USING v_text AS data)
+    INTO :NEW.embedding
+    FROM DUAL;
+EXCEPTION
+  WHEN OTHERS THEN NULL;
+END;
+/
