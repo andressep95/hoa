@@ -73,7 +73,10 @@ func main() {
 			}
 			return names
 		},
-		TokensUsed:  func() (int, int) { return 0, 0 }, // TODO: track tokens
+		TokensUsed: func() (int, int) {
+			u := llm.TotalUsage()
+			return u.InputTokens, u.OutputTokens
+		},
 		ClearHist:   a.ClearMessages,
 		ToolNames: func() []string {
 			defs := tool.Default.Definitions()
@@ -95,14 +98,14 @@ func main() {
 }
 
 func newProvider(cfg *config.Config) provider.Provider {
-	p, _ := cfg.ActiveProviderConfig()
 	apiKey := cfg.APIKey()
+	model := cfg.ResolveModel()
 
 	switch cfg.ActiveProvider {
 	case "openai":
-		return provider.NewOpenAIProvider(apiKey, p.Models.Base, 4096, systemPrompt)
+		return provider.NewOpenAIProvider(apiKey, model, 4096, systemPrompt)
 	default:
-		return provider.NewAnthropicProvider(apiKey, p.Models.Base, 4096, systemPrompt)
+		return provider.NewAnthropicProvider(apiKey, model, 4096, systemPrompt)
 	}
 }
 

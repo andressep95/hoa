@@ -143,3 +143,25 @@ func (c *Config) APIKey() string {
 	}
 	return ""
 }
+
+// ResolveModel returns the model to use following the resolution chain:
+// env var → config → default.
+func (c *Config) ResolveModel() string {
+	// 1. Environment variable override
+	envVars := map[string]string{
+		"anthropic": "ANTHROPIC_MODEL",
+		"openai":    "OPENAI_MODEL",
+		"google":    "GOOGLE_MODEL",
+	}
+	if envName, ok := envVars[c.ActiveProvider]; ok {
+		if v := os.Getenv(envName); v != "" {
+			return v
+		}
+	}
+	// 2. Config
+	if p, ok := c.ActiveProviderConfig(); ok && p.Models.Base != "" {
+		return p.Models.Base
+	}
+	// 3. Default
+	return "claude-sonnet-4-6"
+}

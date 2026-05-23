@@ -1,6 +1,10 @@
 package command
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/cloudcentinel/hoa/internal/cost"
+)
 
 func cmdHelp(_ *Context, _ string) Result {
 	return Result{Lines: []string{
@@ -94,10 +98,12 @@ func cmdProvider(ctx *Context, _ string) Result {
 
 func cmdTokens(ctx *Context, _ string) Result {
 	in, out := ctx.TokensUsed()
+	model := ctx.GetModel()
+	usd := cost.EstimateForModel(model, in, out)
 	return Result{Lines: []string{
-		fmt.Sprintf("  tokens input:  %d", in),
-		fmt.Sprintf("  tokens output: %d", out),
-		fmt.Sprintf("  total:         %d", in+out),
+		fmt.Sprintf("  tokens: %d in · %d out · %d total", in, out, in+out),
+		fmt.Sprintf("  costo:  %s (estimado)", cost.FormatCost(usd)),
+		fmt.Sprintf("  modelo: %s", model),
 	}}
 }
 
