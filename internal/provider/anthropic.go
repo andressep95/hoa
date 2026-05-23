@@ -57,9 +57,13 @@ func (p *AnthropicProvider) Send(ctx context.Context, messages []api.Message, to
 	resp, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     p.model,
 		MaxTokens: p.maxTokens,
-		System:    []anthropic.TextBlockParam{{Text: p.system}},
-		Messages:  toAnthropicMessages(messages),
-		Tools:     toAnthropicTools(tools),
+		System: []anthropic.TextBlockParam{{
+			Text:         p.system,
+			CacheControl: anthropic.NewCacheControlEphemeralParam(),
+		}},
+		Messages:     toAnthropicMessages(messages),
+		Tools:        toAnthropicTools(tools),
+		CacheControl: anthropic.NewCacheControlEphemeralParam(),
 	})
 	if err != nil {
 		return api.Response{}, err
