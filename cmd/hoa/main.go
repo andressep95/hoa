@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/cloudcentinel/hoa/internal/agent"
 	"github.com/cloudcentinel/hoa/internal/command"
@@ -54,11 +55,23 @@ func main() {
 				return ""
 			}
 			defer mc.Close()
-			results, err := memory.Search(mc, query, 5)
-			if err != nil || len(results) == 0 {
+
+			var parts []string
+
+			// Feedback rules (corrections/guidance)
+			if rules, err := mc.SearchFeedback(query, 3); err == nil && len(rules) > 0 {
+				parts = append(parts, memory.FormatFeedback(rules))
+			}
+
+			// Project memory (commit history)
+			if results, err := memory.Search(mc, query, 5); err == nil && len(results) > 0 {
+				parts = append(parts, memory.FormatContext(results))
+			}
+
+			if len(parts) == 0 {
 				return ""
 			}
-			return memory.FormatContext(results)
+			return strings.Join(parts, "\n\n")
 		}
 	}
 
