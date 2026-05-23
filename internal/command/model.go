@@ -21,7 +21,7 @@ func cmdModel(ctx *Context, _ string) Result {
 		items = append(items, MenuItem{
 			Label:  "  " + model,
 			Hint:   hint,
-			Action: func() { ctx.SetModel(model) },
+			Action: func() string { ctx.SetModel(model); return "" },
 		})
 	}
 
@@ -38,7 +38,7 @@ func cmdModel(ctx *Context, _ string) Result {
 			items = append(items, MenuItem{
 				Label:  "  " + model,
 				Hint:   hint,
-				Action: func() { ctx.SetPlanModel(model) },
+				Action: func() string { ctx.SetPlanModel(model); return "" },
 			})
 		}
 	}

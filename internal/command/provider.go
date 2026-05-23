@@ -23,7 +23,7 @@ func cmdProvider(ctx *Context, _ string) Result {
 		items = append(items, MenuItem{
 			Label:  prov,
 			Hint:   hint,
-			Action: func() { ctx.SetProvider(prov) },
+			Action: func() string { ctx.SetProvider(prov); return "" },
 		})
 	}
 
@@ -37,9 +37,10 @@ func cmdProvider(ctx *Context, _ string) Result {
 			prov := p
 			items = append(items, MenuItem{
 				Label:  "＋ Agregar " + prov,
-				Action: func() {
+				Action: func() string {
 					ctx.SetupProvider(prov)
 					ctx.SetProvider(prov)
+					return ""
 				},
 			})
 		}
@@ -49,7 +50,7 @@ func cmdProvider(ctx *Context, _ string) Result {
 	items = append(items, MenuItem{Label: "───────────────────"})
 	items = append(items, MenuItem{
 		Label:  "🔑 Cambiar API key de " + current,
-		Action: func() { ctx.SetupProvider(current) },
+		Action: func() string { ctx.SetupProvider(current); return "" },
 	})
 
 	return Result{

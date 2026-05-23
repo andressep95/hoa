@@ -8,12 +8,12 @@ func cmdMode(ctx *Context, _ string) Result {
 		{
 			Label:  "execute",
 			Hint:   modeHint("execute", current),
-			Action: func() { ctx.SetMode("execute") },
+			Action: func() string { ctx.SetMode("execute"); return "" },
 		},
 		{
 			Label:  "plan+execute",
 			Hint:   modeHint("plan+execute", current),
-			Action: func() { ctx.SetMode("plan+execute") },
+			Action: func() string { ctx.SetMode("plan+execute"); return "" },
 		},
 	}
 	return Result{

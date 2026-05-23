@@ -5,9 +5,9 @@ import "strings"
 
 // MenuItem represents one option in an interactive menu.
 type MenuItem struct {
-	Label    string
-	Hint     string // e.g. "← activo"
-	Action   func() // executed when selected
+	Label  string
+	Hint   string
+	Action func() string // returns feedback text (empty = no feedback)
 }
 
 // Result holds the output of a command execution.
