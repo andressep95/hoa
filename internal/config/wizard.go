@@ -11,9 +11,9 @@ var knownProviders = []struct {
 	Label  string
 	Models []string
 }{
-	{"anthropic", "Anthropic (Claude)", []string{"claude-sonnet-4-20250514", "claude-opus-4-20250414", "claude-haiku-4-5"}},
-	{"openai", "OpenAI (GPT)", []string{"gpt-4o", "o3", "gpt-4o-mini"}},
-	{"ollama", "Ollama (local)", []string{"llama3.1:70b", "codellama:34b", "deepseek-r1:32b"}},
+	{"anthropic", "Anthropic (Claude)", []string{"claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5"}},
+	{"openai", "OpenAI", []string{"gpt-4o", "o3", "o4-mini", "gpt-4o-mini"}},
+	{"ollama", "Ollama (local)", []string{"llama3.1:70b", "deepseek-r1:32b", "codellama:34b"}},
 	{"google", "Google (Gemini)", []string{"gemini-2.5-pro", "gemini-2.5-flash"}},
 }
 
@@ -81,6 +81,7 @@ func RunWizard() *Config {
 				},
 			},
 		},
+		Memory: runMemorySetup(),
 		Harness: HarnessConfig{
 			VerifyAfterWrite: true,
 			SDDEnforced:      true,
@@ -98,8 +99,33 @@ func defaultConfig() *Config {
 	return &Config{
 		ActiveProvider: "anthropic",
 		Providers: map[string]ProviderConfig{
-			"anthropic": {Models: ModelsConfig{Base: "claude-sonnet-4-20250514", Planning: "claude-opus-4-20250414"}},
+			"anthropic": {Models: ModelsConfig{Base: "claude-sonnet-4-6", Planning: "claude-opus-4-7"}},
 		},
 		Harness: HarnessConfig{VerifyAfterWrite: true, SDDEnforced: true, MaxRetries: 3, CompactThreshold: 0.7},
+	}
+}
+
+func runMemorySetup() MemoryConfig {
+	fmt.Println()
+	idx := ui.RunSelector("¿Configurar memoria persistente (Oracle Vector DB)?", []ui.SelectorItem{
+		{Label: "No, saltar por ahora"},
+		{Label: "Sí, configurar conexión Oracle"},
+	})
+	if idx != 1 {
+		return MemoryConfig{Enabled: false}
+	}
+
+	dsn := ui.RunInput("DSN Oracle (host:port/service):", "localhost:1521/FREEPDB1", false)
+	user := ui.RunInput("Usuario:", "MCP_USER", false)
+	pass := ui.RunInput("Password:", "", true)
+	projectKey := ui.RunInput("API Key del proyecto:", "", false)
+
+	return MemoryConfig{
+		Enabled:  true,
+		Provider: "oracle",
+		DSN:      dsn,
+		User:     user,
+		Password: pass,
+		APIKey:   projectKey,
 	}
 }

@@ -13,6 +13,7 @@ const configFile = "config.json"
 type Config struct {
 	ActiveProvider string                    `json:"activeProvider"`
 	Providers      map[string]ProviderConfig `json:"providers"`
+	Memory         MemoryConfig              `json:"memory,omitempty"`
 	Database       DatabaseConfig            `json:"database,omitempty"`
 	Harness        HarnessConfig             `json:"harness"`
 }
@@ -30,7 +31,17 @@ type ModelsConfig struct {
 	Planning string `json:"planning"`
 }
 
-// DatabaseConfig holds vector store connection info.
+// MemoryConfig holds the optional memory provider settings.
+type MemoryConfig struct {
+	Enabled  bool   `json:"enabled"`
+	Provider string `json:"provider,omitempty"` // "oracle" (future: "postgres", "chroma")
+	DSN      string `json:"dsn,omitempty"`
+	User     string `json:"user,omitempty"`
+	Password string `json:"password,omitempty"`
+	APIKey   string `json:"apiKey,omitempty"` // project API key for memory server
+}
+
+// DatabaseConfig holds vector store connection info (deprecated, use MemoryConfig).
 type DatabaseConfig struct {
 	URL      string `json:"url,omitempty"`
 	User     string `json:"user,omitempty"`
