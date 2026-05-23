@@ -170,21 +170,23 @@ func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) 
 		msg := commits[0].Message()
 		items = append(items, MenuItem{
 			Label:  "✓ Confirmar commit",
-			Action: func() { executeCommit(msg, commits[0].Files, sensitive) },
+			Action: func() string { return executeCommit(msg, commits[0].Files, sensitive) },
 		})
 	} else {
 		items = append(items, MenuItem{
 			Label: fmt.Sprintf("✓ Commitear %d commits separados", len(commits)),
-			Action: func() {
+			Action: func() string {
+				var results []string
 				for _, c := range commits {
-					executeCommit(c.Message(), c.Files, sensitive)
+					results = append(results, executeCommit(c.Message(), c.Files, sensitive))
 				}
+				return strings.Join(results, "\n")
 			},
 		})
 		items = append(items, MenuItem{
 			Label: "⊕ Unificar en 1 solo commit",
-			Action: func() {
-				executeCommit(commits[0].Message(), nil, sensitive)
+			Action: func() string {
+				return executeCommit(commits[0].Message(), nil, sensitive)
 			},
 		})
 	}
@@ -195,7 +197,7 @@ func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) 
 	})
 	items = append(items, MenuItem{
 		Label:  "✗ Cancelar",
-		Action: func() {},
+		Action: func() string { return "" },
 	})
 
 	return Result{
@@ -205,9 +207,9 @@ func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) 
 	}
 }
 
-func executeCommit(msg string, files []string, sensitive []string) {
+func executeCommit(msg string, files []string, sensitive []string) string {
 	if errs := ValidateCommitMsg(msg); len(errs) > 0 {
-		return
+		return "❌ validación falló: " + errs[0]
 	}
 
 	if len(files) > 0 {
@@ -225,7 +227,15 @@ func executeCommit(msg string, files []string, sensitive []string) {
 		}
 	}
 
-	exec.Command("git", "commit", "-m", msg).Run()
+	out, err := exec.Command("git", "commit", "-m", msg).CombinedOutput()
+	if err != nil {
+		return "❌ " + strings.TrimSpace(string(out))
+	}
+
+	// Get the hash of the commit we just made
+	hash := gitRun("log", "-1", "--format=%h")
+	subject := gitRun("log", "-1", "--format=%s")
+	return hash + " " + subject
 }
 
 func stripCodeFences(s string) string {
