@@ -966,36 +966,39 @@ Basado en la arquitectura de byo-coding-agent como punto de partida:
 ```
 FASE 1A — Core Agent (fork/adapt de byo-coding-agent)
 ═══════════════════════════════════════════════════════
-1. Scaffold: go mod init + copiar internal/api, internal/provider, internal/tool
-2. Config: ~/.hoa/config.json con wizard de primer uso
-3. Provider Router: dual-model (planning vs execution)
-4. Agent Loop: adaptar agent.go con MaxTurns + Confirm
-5. Tools básicas: bash, read_file, write_file, grep, glob
-6. TUI: adaptar Bubble Tea program con branding HOA
-7. Slash commands: /help, /model, /provider, /tokens, /debug
+1. ✅ Scaffold: go mod init + internal/api, internal/provider, internal/tool
+2. ✅ Config: ~/.hoa/config.json con wizard de primer uso
+3. ✅ Provider Router: dual-model (planning vs execution)
+4. ✅ Agent Loop: agent.go con MaxTurns + tool dispatch
+5. ✅ Tools básicas: bash, read_file, grep, glob
+6. ✅ TUI: Bubble Tea program con branding HOA
+7. ✅ Slash commands: /help, /model, /provider, /tokens, /mode, /memory, /commit, /feedback
 
 FASE 1B — Harness Layer (lo que diferencia a HOA)
 ═══════════════════════════════════════════════════════════
-8. Harness Hooks: interface + hook points en el agent loop
-9. SDD Engine: state machine (Proposal → Spec → Design → Task → Apply → Verify)
-10. Write-Verify Loop: L0-L2 obligatorios, L3-L5 configurables
-11. Commit Tool: git + verify + amnesia
-12. Compaction post-commit: flush context de archivos commiteados
+8. ❌ Harness Hooks: interface + hook points en el agent loop
+9. ❌ SDD Engine: state machine (Proposal → Spec → Design → Task → Apply → Verify)
+10. ❌ Write-Verify Loop: L0-L2 obligatorios, L3-L5 configurables
+11. ✅ Commit Tool: /commit con LLM + validación + post-commit memory push
+12. ❌ Compaction post-commit: flush context de archivos commiteados
 
-FASE 1C — Memory & Intelligence
-════════════════════════════════
-13. Memory (session files): persistencia básica entre sesiones
-14. Oracle 23ai: migrar a vector store con DBMS_VECTOR_CHAIN
-15. Subagent Research: delegación read-only
-16. Subagent Planning: SDD con planning model
-17. Eliminación Categórica: detectar patrones → crear reglas
+FASE 1C — Memory & Intelligence ← COMPLETADA
+═════════════════════════════════════════════
+13. ✅ Memory Provider: Oracle 23ai con go-ora (conexión directa, sin Instant Client)
+14. ✅ Extracción determinista: git log/diff → memory_changes + hunks (sin LLM)
+15. ✅ Enrichment concurrente: cola async + LLM para commits legacy
+16. ✅ Búsqueda semántica: VECTOR_DISTANCE + embeddings ONNX (Oracle nativo)
+17. ✅ Working Context: git diff como memoria de sesión (auto-limpia post-commit)
+18. ✅ Feedback Rules: correcciones del usuario con evolución (superseded_by)
+19. ✅ Prompt Caching: system + automatic caching (90% ahorro en turns 2+)
+20. ✅ Context Injection: working_changes + feedback_rules + project_memory → LLM
+21. ✅ Metadata Trimming: ignora binarios, lockfiles, generados
 
 FASE 1D — Polish
 ═════════════════
-18. MCP Support: conectar memory-management-mcp
-19. Progressive Disclosure: inyectar solo contexto relevante
-20. Skill Discovery: detectar build tools del proyecto
-21. Debug panel: harness events + cost tracking
+22. ❌ Subagent Research: delegación read-only
+23. ❌ Progressive Disclosure: inyectar solo skills relevantes
+24. ❌ Debug panel: harness events + cost tracking
 ```
 
 ---
