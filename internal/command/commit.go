@@ -82,31 +82,55 @@ func generateCommit(ctx *Context, status string) Result {
 	sensitive := checkSensitiveFiles(status)
 
 	diff := gitRun("diff", "HEAD")
-	if len(diff) > 8000 {
-		diff = diff[:8000] + "\n... (truncated)"
-	}
 	stat := gitRun("diff", "--stat", "HEAD")
 	log := gitRun("log", "-3", "--oneline")
 
-	if ctx.AgentSend == nil {
-		return Result{Lines: []string{resultStyle.Render("AgentSend no disponible. Pide al agente: \"haz commit\"")}}
+	// Collect new/untracked file previews
+	var newFiles strings.Builder
+	for _, line := range strings.Split(status, "\n") {
+		if strings.HasPrefix(line, "??") || strings.HasPrefix(line, "A ") {
+			file := strings.TrimSpace(line[2:])
+			raw, _ := exec.Command("head", "-30", file).Output()
+			content := strings.TrimSpace(string(raw))
+			if len(content) > 1500 {
+				content = content[:1500] + "\n..."
+			}
+			if content != "" {
+				newFiles.WriteString("--- " + file + " ---\n" + content + "\n\n")
+			}
+		}
 	}
 
-	prompt := commitSystemPrompt + "\n\nDIFF STAT:\n" + stat + "\n\nRECENT COMMITS:\n" + log + "\n\nDIFF:\n" + diff
+	if ctx.AgentSend == nil {
+		return Result{Lines: []string{resultStyle.Render("AgentSend no disponible.")}}
+	}
 
-	response, err := ctx.AgentSend(prompt)
+	// Build full prompt
+	var prompt strings.Builder
+	prompt.WriteString(commitSystemPrompt)
+	prompt.WriteString("\n\nGIT STATUS:\n" + status)
+	prompt.WriteString("\n\nDIFF STAT:\n" + stat)
+	prompt.WriteString("\n\nRECENT COMMITS (match style):\n" + log)
+	if newFiles.Len() > 0 {
+		prompt.WriteString("\n\nNEW FILES (preview):\n" + newFiles.String())
+	}
+	prompt.WriteString("\n\nDIFF:\n")
+	if len(diff) > 6000 {
+		prompt.WriteString(diff[:6000] + "\n... (truncated)")
+	} else {
+		prompt.WriteString(diff)
+	}
+
+	response, err := ctx.AgentSend(prompt.String())
 	if err != nil {
 		return Result{Lines: []string{resultStyle.Render("Error: " + err.Error())}}
 	}
 
-	// Parse JSON response
 	response = stripCodeFences(response)
 	var parsed commitResponse
 	if err := json.Unmarshal([]byte(response), &parsed); err != nil {
-		// Fallback: try to use raw response as single commit
 		return Result{Lines: []string{
-			resultStyle.Render("LLM no devolvió JSON válido. Respuesta:"),
-			"",
+			resultStyle.Render("LLM no devolvió JSON válido:"),
 			"  " + strings.ReplaceAll(response, "\n", "\n  "),
 		}}
 	}
@@ -117,7 +141,6 @@ func generateCommit(ctx *Context, status string) Result {
 
 	return presentCommits(parsed.Commits, sensitive, ctx)
 }
-
 func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) Result {
 	lines := []string{""}
 

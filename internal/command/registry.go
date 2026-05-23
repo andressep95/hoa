@@ -21,20 +21,21 @@ type Result struct {
 
 // Context provides commands access to the runtime state.
 type Context struct {
-	GetModel     func() string
-	SetModel     func(string)
-	GetPlanModel func() string
-	SetPlanModel func(string)
-	GetProvider  func() string
-	SetProvider  func(string)
-	GetModels    func() []string
-	GetProviders func() []string
-	GetMode      func() string
-	SetMode      func(string)
-	TokensUsed   func() (int, int)
-	ClearHist    func()
-	ToolNames    func() []string
-	AgentSend    func(prompt string) (string, error) // send to LLM without adding to conversation
+	GetModel      func() string
+	SetModel      func(string)
+	GetPlanModel  func() string
+	SetPlanModel  func(string)
+	GetProvider   func() string
+	SetProvider   func(string)
+	SetupProvider func(name string) // configure API key for a new provider
+	GetModels     func() []string
+	GetProviders  func() []string
+	GetMode       func() string
+	SetMode       func(string)
+	TokensUsed    func() (int, int)
+	ClearHist     func()
+	ToolNames     func() []string
+	AgentSend     func(prompt string) (string, error)
 }
 
 // Handler is a function that executes a slash command.
