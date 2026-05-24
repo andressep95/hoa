@@ -5,27 +5,45 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
+	"sync"
+	"time"
 
 	"github.com/cloudcentinel/hoa/internal/agent"
 	"github.com/cloudcentinel/hoa/internal/command"
 	"github.com/cloudcentinel/hoa/internal/config"
+	"github.com/cloudcentinel/hoa/internal/cost"
+	"github.com/cloudcentinel/hoa/internal/health"
 	"github.com/cloudcentinel/hoa/internal/memory"
+	"github.com/cloudcentinel/hoa/internal/permission"
 	"github.com/cloudcentinel/hoa/internal/provider"
 	"github.com/cloudcentinel/hoa/internal/stack"
 	"github.com/cloudcentinel/hoa/internal/tool"
 	"github.com/cloudcentinel/hoa/internal/ui"
 )
 
-const systemPrompt = `You are HOA (Harness Oriented Agent), a coding assistant running in a terminal.
-You have tools: bash, read_file, grep, glob. Use them to help the user.
-Be concise. Answer in the user's language.
+const systemPrompt = `You are HOA (Harness Oriented Agent), a coding assistant with persistent vector memory backed by Oracle 23ai.
 
-IMPORTANT — Context injection:
-Your messages may include <working_changes>, <project_memory>, and <feedback_rules> blocks.
-These contain pre-loaded context from the project's vector database and git state.
-USE THIS CONTEXT FIRST before reading files. Only use tools if the injected context is insufficient.
-Do not re-read files whose content is already in the injected context.`
+MEMORY ARCHITECTURE:
+- Oracle 23ai holds the authoritative semantic history: every commit, file change, intent, decision, and feedback rule.
+- <project_knowledge> lists every file Oracle has indexed with its latest description. This is your routing map.
+- search_memory returns structured results with actual file content (complete or labelled truncated), relevance score, what changed, and why.
+- Score: 0.0 = perfect match → 0.55 = cutoff. Results above 0.55 are filtered. Trust scores below 0.3 fully.
+- <working_changes> are uncommitted diffs the user approved — use as a patch on top of Oracle results.
+
+TOOL DECISION GUIDE:
+- search_memory(query)    → "find commits/decisions RELATED TO a concept" (vector/semantic)
+- oracle_query(type,...)  → "what HAPPENED to X", "WHO changed Y", "WHEN was Z introduced" (structured SQL)
+- read_file(path)         → file content (Oracle-backed: returns indexed version if available, disk otherwise)
+- bash/grep/glob          → live filesystem: new files, running tests, anything not in Oracle
+
+TWO-STAGE ROUTING:
+1. Check <project_knowledge>. If the file/topic is listed → use search_memory or oracle_query first.
+2. If search_memory returns "complete" content for a file → do NOT additionally call read_file.
+3. If no Oracle results → fall through to filesystem tools.
+4. <working_changes> supplements Oracle for uncommitted edits.
+
+Never explain routing decisions — just act and answer.
+Be concise. Answer in the user's language.`
 
 var knownProvidersList = []struct {
 	Name   string
@@ -60,51 +78,37 @@ func main() {
 		a.VerifyCmd = proj.BuildCmd
 	}
 
-	// Wire memory search if enabled
+	// Wire Oracle memory if enabled.
+	// - Registers search_memory as an explicit tool the LLM can invoke.
+	// - Caches a high-level project knowledge block in the system prompt (one-shot at startup).
 	if cfg.Memory.Enabled && cfg.Memory.DSN != "" && cfg.Memory.APIKey != "" {
-		a.MemorySearch = func(query string) (string, []string) {
-			mc, err := memory.NewClient(cfg.Memory.DSN, cfg.Memory.APIKey)
-			if err != nil {
-				return "", nil
-			}
-			defer mc.Close()
+		tool.Default.Register(tool.NewMemoryTool(cfg.Memory.DSN, cfg.Memory.APIKey))
+		tool.Default.Register(tool.NewOracleReadFileTool(cfg.Memory.DSN, cfg.Memory.APIKey))
+		tool.Default.Register(tool.NewOracleQueryTool(cfg.Memory.DSN, cfg.Memory.APIKey))
 
-			var parts []string
-			var labels []string
-
-			// Feedback rules (corrections/guidance)
-			if rules, err := mc.SearchFeedback(query, 3); err == nil && len(rules) > 0 {
-				parts = append(parts, memory.FormatFeedback(rules))
-				for _, r := range rules {
-					label := r.Rule
-					if len(label) > 60 {
-						label = label[:57] + "..."
-					}
-					labels = append(labels, "feedback  "+label)
-				}
+		// Startup: fetch high-level project knowledge and cache it in the system prompt.
+		// Anthropic caches this block across turns within the 5-min TTL window.
+		if mc, err := memory.NewClient(cfg.Memory.DSN, cfg.Memory.APIKey); err == nil {
+			if knowledge, err := memory.FetchProjectKnowledge(mc); err == nil && knowledge != "" {
+				a.Provider.SetKnowledgeContext(knowledge)
 			}
-
-			// Project memory (commit history)
-			if results, err := memory.Search(mc, query, 5); err == nil && len(results) > 0 {
-				parts = append(parts, memory.FormatContext(results))
-				for _, r := range results {
-					hash := r.CommitHash
-					if len(hash) > 7 {
-						hash = hash[:7]
-					}
-					labels = append(labels, r.FilePath+"  "+hash)
-				}
-			}
-
-			if len(parts) == 0 {
-				return "", nil
-			}
-			return strings.Join(parts, "\n\n"), labels
+			mc.Close()
 		}
 	}
 
-	// Working context — always active (uses git directly)
-	a.WorkingContext = memory.WorkingContext
+	// Working context — always active (uses git directly). Cached for the
+	// footer / /status to avoid running git every render.
+	var (
+		workingMu       sync.Mutex
+		workingSnapshot memory.WorkingChanges
+	)
+	a.WorkingContext = func() memory.WorkingChanges {
+		wc := memory.WorkingContext()
+		workingMu.Lock()
+		workingSnapshot = wc
+		workingMu.Unlock()
+		return wc
+	}
 
 	mode := cfg.Harness.Mode
 	if mode == "" {
@@ -115,6 +119,12 @@ func main() {
 		pc, _ := cfg.ActiveProviderConfig()
 		return buildBanner(cfg.ActiveProvider, a.Provider.Model(), pc.Models.Planning, mode)
 	}
+
+	// Declared up front so cmdCtx closures can capture them; they're
+	// assigned below after `prog` exists.
+	policy := permission.NewAskOnceMemo()
+	a.Policy = policy
+	var monitor *health.Monitor
 
 	cmdCtx := &command.Context{
 		GetModel: func() string { return a.Provider.Model() },
@@ -183,6 +193,33 @@ func main() {
 			u := a.Provider.TotalUsage()
 			return u.InputTokens, u.OutputTokens
 		},
+		CostTotal: func() float64 {
+			u := a.Provider.TotalUsage()
+			return cost.EstimateForModel(a.Provider.Model(), u.InputTokens, u.OutputTokens)
+		},
+		WorkingCount: func() int {
+			workingMu.Lock()
+			defer workingMu.Unlock()
+			return len(workingSnapshot.Files)
+		},
+		WorkingSnapshot: func() command.WorkingSnapshotData {
+			workingMu.Lock()
+			defer workingMu.Unlock()
+			out := command.WorkingSnapshotData{Files: make([]command.FileSnapshot, 0, len(workingSnapshot.Files))}
+			for _, f := range workingSnapshot.Files {
+				out.Files = append(out.Files, command.FileSnapshot{Path: f.Path, SizeBytes: f.SizeBytes})
+			}
+			return out
+		},
+		OracleStatus: func() (bool, error, time.Time) {
+			if monitor == nil {
+				return false, nil, time.Time{}
+			}
+			return monitor.Status()
+		},
+		RememberedTools: func() []string {
+			return policy.Remembered()
+		},
 		ClearHist: a.ClearMessages,
 		ToolNames: func() []string {
 			defs := tool.Default.Definitions()
@@ -217,6 +254,61 @@ func main() {
 
 	prog, outputFn := ui.NewProgram(bannerFn, a.Send, cmdCtx)
 	a.OnOutput = outputFn
+
+	// Confirm callback uses prog (declared above) to send approval requests.
+	a.Confirm = func(prompt, detail string) permission.ConfirmResult {
+		reply := make(chan permission.ConfirmResult, 1)
+		prog.Send(ui.ApprovalRequest{Prompt: prompt, Detail: detail, Reply: reply})
+		return <-reply
+	}
+
+	// Oracle health monitor: heartbeat every 30s; pushes status to footer.
+	if cfg.Memory.Enabled && cfg.Memory.DSN != "" {
+		monitor = health.NewMonitor()
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		monitor.Start(ctx, cfg.Memory.DSN, 30*time.Second)
+		go func() {
+			// Initial push (the immediate first tick will fire shortly).
+			tick := time.NewTicker(200 * time.Millisecond)
+			defer tick.Stop()
+			pushed := false
+			for !pushed {
+				select {
+				case <-ctx.Done():
+					return
+				case <-tick.C:
+					ok, oerr, since := monitor.Status()
+					if !since.IsZero() {
+						configured := true
+						prog.Send(ui.FooterUpdate{
+							OracleConfigured: &configured,
+							OracleOK:         &ok,
+							OracleErr:        oerr,
+							ResetOracleErr:   oerr == nil,
+						})
+						pushed = true
+					}
+				}
+			}
+			// Subsequent updates from the channel.
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-monitor.Updates():
+					ok, oerr, _ := monitor.Status()
+					configured := true
+					prog.Send(ui.FooterUpdate{
+						OracleConfigured: &configured,
+						OracleOK:         &ok,
+						OracleErr:        oerr,
+						ResetOracleErr:   oerr == nil,
+					})
+				}
+			}
+		}()
+	}
 
 	if _, err := prog.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)

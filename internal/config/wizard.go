@@ -19,7 +19,8 @@ var knownProviders = []struct {
 
 // RunWizard guides the user through first-time setup with TUI selectors.
 func RunWizard() *Config {
-	fmt.Println("\n🎛️  HOA — Primera configuración\n")
+	fmt.Println("\nHOA — Primera configuracion")
+	fmt.Println()
 
 	// 1. Select provider
 	providerItems := make([]ui.SelectorItem, len(knownProviders))
@@ -90,7 +91,7 @@ func RunWizard() *Config {
 		},
 	}
 
-	fmt.Printf("\n✅ Configuración lista (provider: %s, base: %s, planning: %s)\n\n",
+	fmt.Printf("\n[ok] Configuracion lista (provider: %s, base: %s, planning: %s)\n\n",
 		provider.Name, baseModel, planModel)
 	return cfg
 }
