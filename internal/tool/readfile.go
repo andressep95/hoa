@@ -8,13 +8,63 @@ import (
 	"strings"
 
 	"github.com/cloudcentinel/hoa/internal/api"
+	"github.com/cloudcentinel/hoa/internal/memory"
 )
 
 func init() { Default.Register(&ReadFileTool{}) }
 
+// ReadFileTool reads directly from the filesystem (default, no Oracle).
 type ReadFileTool struct{}
 
-func (ReadFileTool) Definition() api.ToolDef {
+func (ReadFileTool) Definition() api.ToolDef { return readFileToolDef() }
+
+func (ReadFileTool) Execute(_ context.Context, input string) (string, bool) {
+	return readFileFromDisk(input)
+}
+
+// OracleReadFileTool intercepts read_file calls and serves content from Oracle
+// when the file has been indexed. Falls back to the filesystem transparently.
+// Registered in main.go when Oracle is configured — overwrites ReadFileTool.
+type OracleReadFileTool struct {
+	dsn    string
+	apiKey string
+}
+
+func NewOracleReadFileTool(dsn, apiKey string) *OracleReadFileTool {
+	return &OracleReadFileTool{dsn: dsn, apiKey: apiKey}
+}
+
+func (t *OracleReadFileTool) Definition() api.ToolDef { return readFileToolDef() }
+
+func (t *OracleReadFileTool) Execute(_ context.Context, input string) (string, bool) {
+	var in struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(input), &in); err != nil {
+		return readFileFromDisk(input)
+	}
+
+	mc, err := memory.NewClient(t.dsn, t.apiKey)
+	if err != nil {
+		return readFileFromDisk(input)
+	}
+	defer mc.Close()
+
+	fc, found, err := mc.GetLatestFileContent(in.Path)
+	if err != nil || !found {
+		return readFileFromDisk(input)
+	}
+
+	result := fc.Content
+	if fc.Truncated {
+		result += fmt.Sprintf("\n\n[Oracle: content truncated at %d chars — use bash to read the full file]", memory.MaxFileContentBytes())
+	}
+	return result, false
+}
+
+// ── shared helpers ────────────────────────────────────────────────────────────
+
+func readFileToolDef() api.ToolDef {
 	return api.ToolDef{
 		Name:        "read_file",
 		Description: "Read the contents of a file. Optionally specify offset and limit (line numbers, 0-indexed).",
@@ -27,7 +77,7 @@ func (ReadFileTool) Definition() api.ToolDef {
 	}
 }
 
-func (ReadFileTool) Execute(_ context.Context, input string) (string, bool) {
+func readFileFromDisk(input string) (string, bool) {
 	var in struct {
 		Path   string `json:"path"`
 		Offset int    `json:"offset"`

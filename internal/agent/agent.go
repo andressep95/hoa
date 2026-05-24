@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/cloudcentinel/hoa/internal/api"
+	"github.com/cloudcentinel/hoa/internal/memory"
+	"github.com/cloudcentinel/hoa/internal/permission"
 	"github.com/cloudcentinel/hoa/internal/provider"
 	"github.com/cloudcentinel/hoa/internal/tool"
 )
@@ -16,8 +18,8 @@ import (
 // OutputFunc is called by the agent to emit text or tool events.
 type OutputFunc func(kind string, text string)
 
-// WorkingContextFunc returns context from uncommitted changes.
-type WorkingContextFunc func() string
+// WorkingContextFunc returns the structured uncommitted-changes context.
+type WorkingContextFunc func() memory.WorkingChanges
 
 // MemorySearchFunc searches project memory.
 // Returns the formatted context to inject into the LLM prompt and the list of
@@ -34,6 +36,8 @@ type Agent struct {
 	MemorySearch   MemorySearchFunc
 	WorkingContext WorkingContextFunc
 	VerifyCmd      string // build command to run after file modifications
+	Policy         permission.Policy
+	Confirm        func(prompt, detail string) permission.ConfirmResult // nil = auto-approve
 
 	messages []api.Message
 }
@@ -53,22 +57,54 @@ func New(p provider.Provider, system string, tools *tool.Registry) *Agent {
 func (a *Agent) Send(ctx context.Context, prompt string) (string, error) {
 	var contextParts []string
 
-	// 1. Working context (uncommitted changes — most relevant)
-	if a.WorkingContext != nil {
-		if wc := a.WorkingContext(); wc != "" {
-			contextParts = append(contextParts, wc)
-			n := strings.Count(wc, "\n--- ")
-			a.OnOutput("context", fmt.Sprintf("📂 %d archivo(s) en progreso inyectados", n))
+	// 1. Memory context (Oracle — historical relevance, primary source)
+	if a.MemorySearch != nil {
+		mc, labels := a.MemorySearch(prompt)
+		if mc != "" {
+			contextParts = append(contextParts, mc)
+			a.OnOutput("context", fmt.Sprintf("[mem] %d resultado(s) de Oracle:", len(labels)))
+			for _, label := range labels {
+				a.OnOutput("memory-item", label)
+			}
+		} else {
+			a.OnOutput("context", "[mem] Oracle: sin resultados relevantes para esta consulta")
 		}
 	}
 
-	// 2. Memory context (Oracle — historical relevance)
-	if a.MemorySearch != nil {
-		if mc, labels := a.MemorySearch(prompt); mc != "" {
-			contextParts = append(contextParts, mc)
-			a.OnOutput("context", fmt.Sprintf("🧠 %d resultado(s) de Oracle:", len(labels)))
-			for _, label := range labels {
-				a.OnOutput("memory-item", label)
+	// 2. Working context (uncommitted changes — requires user approval, single modal)
+	if a.WorkingContext != nil {
+		wc := a.WorkingContext()
+		if len(wc.Files) > 0 {
+			include := true
+			if a.Confirm != nil {
+				// Check memo: if user already pressed 'a' for working_context, skip modal.
+				decide := permission.DecisionAsk
+				if a.Policy != nil {
+					decide, _ = a.Policy.Decide(ctx, "working_context", "")
+				}
+				if decide != permission.DecisionAllow {
+					result := a.Confirm(
+						fmt.Sprintf("incluir %d archivo(s) sin commitear como contexto?", len(wc.Files)),
+						"",
+					)
+					switch result {
+					case permission.ResultYes:
+						// include once
+					case permission.ResultAlways:
+						if r, ok := a.Policy.(permission.Rememberer); ok {
+							r.Remember("working_context")
+						}
+					case permission.ResultNo:
+						include = false
+					}
+				}
+			}
+			if include && wc.Block != "" {
+				contextParts = append(contextParts, wc.Block)
+				a.OnOutput("context", fmt.Sprintf("[wc] %d archivo(s) aprobados:", len(wc.Files)))
+				for _, f := range wc.Files {
+					a.OnOutput("context-item", fmt.Sprintf("%s  %s", f.Path, memory.HumanBytes(f.SizeBytes)))
+				}
 			}
 		}
 	}
@@ -109,7 +145,7 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 				}
 			case api.BlockToolUse:
 				a.OnOutput("tool", formatToolCall(b.ToolName, b.ToolInput))
-				result, isErr := a.Tools.Execute(ctx, b.ToolName, b.ToolInput)
+				result, isErr := a.executeTool(ctx, b.ToolName, b.ToolInput)
 				if isWriteTool(b.ToolName, b.ToolInput) {
 					wroteFiles = true
 				}
@@ -134,7 +170,7 @@ func (a *Agent) loop(ctx context.Context) (string, error) {
 		// Write-verify loop: run build only if a write-capable tool was used
 		if a.VerifyCmd != "" && wroteFiles {
 			if verifyErr := a.runVerify(); verifyErr != "" {
-				a.OnOutput("verify", "⚠️ build failed")
+				a.OnOutput("verify", "[!] build failed")
 				toolResults = append(toolResults, api.Block{
 					Type:       api.BlockText,
 					Text:       "BUILD FAILED. Fix the errors before continuing:\n" + verifyErr,
@@ -171,6 +207,42 @@ func (a *Agent) SendOneShot(ctx context.Context, prompt string) (string, error) 
 		}
 	}
 	return strings.TrimSpace(text.String()), nil
+}
+
+// executeTool applies the permission policy, optionally asks for confirmation
+// (with diff detail for write_file), then dispatches to the registry.
+func (a *Agent) executeTool(ctx context.Context, name, rawInput string) (string, bool) {
+	decision := permission.DecisionAsk
+	reason := ""
+	if a.Policy != nil {
+		decision, reason = a.Policy.Decide(ctx, name, rawInput)
+	}
+
+	switch decision {
+	case permission.DecisionAllow:
+		// proceed
+	case permission.DecisionDeny:
+		if reason == "" {
+			reason = "permission policy denied this tool call"
+		}
+		return reason, true
+	case permission.DecisionAsk:
+		prompt, detail := buildApprovalPrompt(name, rawInput)
+		if a.Confirm != nil {
+			result := a.Confirm(prompt, detail)
+			switch result {
+			case permission.ResultYes:
+				// proceed once
+			case permission.ResultAlways:
+				if r, ok := a.Policy.(permission.Rememberer); ok {
+					r.Remember(name)
+				}
+			case permission.ResultNo:
+				return "user denied this tool call", true
+			}
+		}
+	}
+	return a.Tools.Execute(ctx, name, rawInput)
 }
 
 func (a *Agent) runVerify() string {
