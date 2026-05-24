@@ -10,6 +10,45 @@ import (
 	go_ora "github.com/sijms/go-ora/v2"
 )
 
+// maxFileContentBytes is the character limit when fetching content_after by file path.
+// Large enough for most source files; truncated files are flagged in the result.
+const maxFileContentBytes = 30000
+
+// MaxFileContentBytes exposes the truncation limit for callers (e.g. tool output messages).
+func MaxFileContentBytes() int { return maxFileContentBytes }
+
+// FileContent holds the result of a direct file lookup in Oracle.
+type FileContent struct {
+	Content    string
+	CommitHash string
+	Truncated  bool
+}
+
+// GetLatestFileContent returns the most recently indexed content_after for a file path.
+// Returns found=false (no error) when the file is not in Oracle for this project.
+func (c *Client) GetLatestFileContent(filePath string) (fc FileContent, found bool, err error) {
+	var content string
+	err = c.db.QueryRow(`
+		SELECT DBMS_LOB.SUBSTR(content_after, :1, 1), commit_hash
+		FROM HOA.memory_changes
+		WHERE project_id = HEXTORAW(:2)
+		  AND file_path = :3
+		  AND content_after IS NOT NULL
+		ORDER BY created_at DESC
+		FETCH FIRST 1 ROW ONLY`,
+		maxFileContentBytes, c.projectID, filePath,
+	).Scan(&content, &fc.CommitHash)
+	if err == sql.ErrNoRows {
+		return FileContent{}, false, nil
+	}
+	if err != nil {
+		return FileContent{}, false, err
+	}
+	fc.Content = content
+	fc.Truncated = len(content) >= maxFileContentBytes-100
+	return fc, true, nil
+}
+
 // Client connects directly to Oracle 23ai for memory operations.
 type Client struct {
 	db        *sql.DB
@@ -84,6 +123,9 @@ func (c *Client) Ping() error { return c.db.Ping() }
 
 // ProjectID returns the resolved project UUID.
 func (c *Client) ProjectID() string { return c.projectID }
+
+// DB returns the underlying connection for advanced structured queries.
+func (c *Client) DB() *sql.DB { return c.db }
 
 // GetIndexedCommits returns all commit hashes already stored for this project.
 func (c *Client) GetIndexedCommits() (map[string]bool, error) {
