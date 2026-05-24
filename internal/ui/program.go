@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/cloudcentinel/hoa/internal/command"
+	"github.com/cloudcentinel/hoa/internal/permission"
 )
 
 // AgentSendFunc sends a message to the agent.
@@ -23,6 +24,27 @@ type AgentSendFunc func(ctx context.Context, input string) (string, error)
 type outputMsg struct{ kind, text string }
 type agentDoneMsg struct{ err error }
 type asyncCmdDoneMsg struct{ result command.Result }
+
+// ApprovalRequest is sent when the agent needs y/a/n from the user.
+type ApprovalRequest struct {
+	Prompt string
+	Detail string
+	Reply  chan permission.ConfirmResult
+}
+
+// FooterUpdate is a message sent to refresh footer state in-place.
+// Only non-zero / non-nil fields are applied so callers can update
+// individual segments (cost-only, oracle-only, etc).
+type FooterUpdate struct {
+	CWD              *string
+	WorkingCount     *int
+	InTok, OutTok    *int
+	CostUSD          *float64
+	OracleConfigured *bool
+	OracleOK         *bool
+	OracleErr        error // ignored when nil — set ResetOracleErr to clear
+	ResetOracleErr   bool
+}
 
 // Model is the main Bubble Tea TUI model.
 type Model struct {
@@ -51,10 +73,20 @@ type Model struct {
 	menuItems  []command.MenuItem
 	menuCursor int
 
+	// Approval modal state
+	approvalActive bool
+	approvalPrompt string
+	approvalDetail string
+	approvalReply  chan permission.ConfirmResult
+	approvalVP     viewport.Model
+
 	// Autocomplete state
 	acActive bool
 	acItems  []string
 	acCursor int
+
+	// Footer (always-visible status line)
+	footer Footer
 }
 
 // NewProgram creates the Bubble Tea program and returns an output function for the agent.
@@ -88,6 +120,8 @@ func newModel(banner func() string, agentFn AgentSendFunc, cmdCtx *command.Conte
 	vp := viewport.New(80, 20)
 	vp.MouseWheelEnabled = true
 
+	cwd, _ := os.Getwd()
+
 	return Model{
 		input:    ti,
 		spinner:  sp,
@@ -101,6 +135,7 @@ func newModel(banner func() string, agentFn AgentSendFunc, cmdCtx *command.Conte
 		agentFn:  agentFn,
 		cmdCtx:   cmdCtx,
 		outputCh: ch,
+		footer:   Footer{CWD: cwd, OracleConfigured: cmdCtx != nil && cmdCtx.MemoryEnabled != nil && cmdCtx.MemoryEnabled(), OracleOK: true},
 	}
 }
 
@@ -129,8 +164,8 @@ func (m *Model) calcViewportHeight() int {
 	}
 	ban := m.banner()
 	banH := strings.Count(ban, "\n") + 1
-	// Reserve: 1 separator after banner + 1 spinner + 1 input + 1 padding
-	h := m.height - banH - 4
+	// Reserve: 1 separator after banner + 1 footer + 1 spinner + 1 input + 1 padding
+	h := m.height - banH - 5
 	if h < 5 {
 		h = 5
 	}
@@ -182,6 +217,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.menuActive {
 			return m.updateMenu(msg)
+		}
+		if m.approvalActive {
+			return m.updateApproval(msg)
 		}
 		if m.acActive {
 			switch msg.String() {
@@ -297,7 +335,59 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.appendLine("")
 		m.atBottom = true
+		m.refreshFooterFromCtx()
 		m.refreshViewport()
+		return m, nil
+
+	case FooterUpdate:
+		if msg.CWD != nil {
+			m.footer.CWD = *msg.CWD
+		}
+		if msg.WorkingCount != nil {
+			m.footer.WorkingCount = *msg.WorkingCount
+		}
+		if msg.InTok != nil {
+			m.footer.InTok = *msg.InTok
+		}
+		if msg.OutTok != nil {
+			m.footer.OutTok = *msg.OutTok
+		}
+		if msg.CostUSD != nil {
+			m.footer.CostUSD = *msg.CostUSD
+		}
+		if msg.OracleConfigured != nil {
+			m.footer.OracleConfigured = *msg.OracleConfigured
+		}
+		if msg.OracleOK != nil {
+			m.footer.OracleOK = *msg.OracleOK
+		}
+		if msg.ResetOracleErr {
+			m.footer.OracleErr = nil
+		} else if msg.OracleErr != nil {
+			m.footer.OracleErr = msg.OracleErr
+		}
+		return m, nil
+
+	case ApprovalRequest:
+		m.approvalActive = true
+		m.approvalPrompt = msg.Prompt
+		m.approvalDetail = msg.Detail
+		m.approvalReply = msg.Reply
+		h := m.height - 6
+		if h < 5 {
+			h = 5
+		}
+		w := m.width - 4
+		if w < 40 {
+			w = 40
+		}
+		m.approvalVP = viewport.New(w, h)
+		m.approvalVP.MouseWheelEnabled = true
+		if msg.Detail != "" {
+			m.approvalVP.SetContent(msg.Detail)
+		} else {
+			m.approvalVP.SetContent(msg.Prompt)
+		}
 		return m, nil
 
 	case asyncCmdDoneMsg:
@@ -316,6 +406,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.lines = append(m.lines, result.Lines...)
 		m.atBottom = true
+		m.refreshFooterFromCtx()
 		m.refreshViewport()
 		return m, nil
 
@@ -384,6 +475,37 @@ func (m Model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// ── Approval handling ────────────────────────────────────────────────────────
+
+func (m Model) updateApproval(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	reply := func(r permission.ConfirmResult, echo string) (tea.Model, tea.Cmd) {
+		m.appendLine(StyleDim.Render(echo))
+		if m.approvalReply != nil {
+			m.approvalReply <- r
+			m.approvalReply = nil
+		}
+		m.approvalActive = false
+		m.atBottom = true
+		m.refreshViewport()
+		return m, nil
+	}
+	switch msg.String() {
+	case "y", "Y":
+		return reply(permission.ResultYes, "  > approved (this time)")
+	case "a", "A":
+		return reply(permission.ResultAlways, "  > approved (always)")
+	case "n", "N", "esc", "ctrl+c":
+		return reply(permission.ResultNo, "  > denied")
+	case "up", "pgup", "ctrl+u":
+		m.approvalVP.HalfPageUp()
+		return m, nil
+	case "down", "pgdown", "ctrl+d":
+		m.approvalVP.HalfPageDown()
+		return m, nil
+	}
+	return m, nil
+}
+
 // ── Autocomplete handling ───────────────────────────────────────────────────
 
 func (m *Model) updateAutocompleteState() {
@@ -431,6 +553,23 @@ func (m *Model) updateAutocompleteState() {
 }
 
 // ── Content helpers ──────────────────────────────────────────────────────────
+
+func (m *Model) refreshFooterFromCtx() {
+	if m.cmdCtx == nil {
+		return
+	}
+	if m.cmdCtx.TokensUsed != nil {
+		in, out := m.cmdCtx.TokensUsed()
+		m.footer.InTok = in
+		m.footer.OutTok = out
+	}
+	if m.cmdCtx.CostTotal != nil {
+		m.footer.CostUSD = m.cmdCtx.CostTotal()
+	}
+	if m.cmdCtx.WorkingCount != nil {
+		m.footer.WorkingCount = m.cmdCtx.WorkingCount()
+	}
+}
 
 func (m *Model) appendLine(line string) {
 	m.lines = append(m.lines, line)
@@ -532,6 +671,10 @@ func (m Model) View() string {
 		return StyleDim.Render("¡Hasta luego!") + "\n"
 	}
 
+	if m.approvalActive {
+		return m.viewApprovalModal()
+	}
+
 	var sb strings.Builder
 	ban := m.banner()
 	sb.WriteString(ban)
@@ -549,6 +692,10 @@ func (m Model) View() string {
 	if m.thinking {
 		sb.WriteString(fmt.Sprintf("  %s pensando...\n", m.spinner.View()))
 	}
+
+	// Footer: always-visible status line above the prompt.
+	sb.WriteString(m.footer.Render(m.width))
+	sb.WriteString("\n")
 
 	sb.WriteString(m.input.View())
 
@@ -588,4 +735,27 @@ func (m Model) renderMenu() string {
 	}
 	sb.WriteString("\n" + StyleDim.Render("  Enter confirmar · Esc cancelar") + "\n")
 	return sb.String()
+}
+
+func (m Model) viewApprovalModal() string {
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+	borderStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("220")).
+		Padding(0, 1)
+
+	w := m.width - 4
+	if w < 40 {
+		w = 40
+	}
+
+	title := titleStyle.Render(m.approvalPrompt)
+	sep := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).
+		Render(strings.Repeat("─", w-4))
+	hint := StyleDim.Render("  y: aprobar · a: siempre · n: denegar · esc: cancelar")
+
+	body := title + "\n" + sep + "\n" + m.approvalVP.View()
+	modal := borderStyle.Width(w).Render(body)
+
+	return modal + "\n" + hint + "\n"
 }
