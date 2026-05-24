@@ -373,15 +373,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.approvalPrompt = msg.Prompt
 		m.approvalDetail = msg.Detail
 		m.approvalReply = msg.Reply
-		h := m.height - 6
-		if h < 5 {
-			h = 5
+		ban := m.banner()
+		banH := strings.Count(ban, "\n") + 1
+		// innerW: border(2) + padding(2) = 4 overhead; additional margin of 4
+		innerW := m.width - 8
+		if innerW < 40 {
+			innerW = 40
 		}
-		w := m.width - 4
-		if w < 40 {
-			w = 40
+		// height: total - banner - contextLines(3) - title(1) - sep(1) - border(2) - hint(2)
+		vpH := m.height - banH - 9
+		if vpH < 3 {
+			vpH = 3
 		}
-		m.approvalVP = viewport.New(w, h)
+		m.approvalVP = viewport.New(innerW, vpH)
 		m.approvalVP.MouseWheelEnabled = true
 		if msg.Detail != "" {
 			m.approvalVP.SetContent(msg.Detail)
@@ -703,9 +707,11 @@ func (m Model) View() string {
 		sb.WriteString("\n")
 		for i, item := range m.acItems {
 			if i == m.acCursor {
-				sb.WriteString(StylePrompt.Render("  ❯ /"+item) + "\n")
+				sb.WriteString(StylePrompt.Render("  ❯ /" + item))
+				sb.WriteString("\n")
 			} else {
-				sb.WriteString(StyleDim.Render("    /"+item) + "\n")
+				sb.WriteString(StyleDim.Render("    /" + item))
+				sb.WriteString("\n")
 			}
 		}
 	}
@@ -714,11 +720,16 @@ func (m Model) View() string {
 }
 
 func (m Model) renderMenu() string {
-	var sb strings.Builder
-	sb.WriteString("\n" + StyleSubtitle.Render(m.menuTitle) + "\n\n")
+	var body strings.Builder
+
+	// Title as first line inside the border.
+	body.WriteString(StyleSubtitle.Render(m.menuTitle))
+	body.WriteString("\n\n")
+
 	for i, item := range m.menuItems {
 		if item.Label == "───────────────────" {
-			sb.WriteString("  " + StyleDim.Render(item.Label) + "\n")
+			body.WriteString(StyleDim.Render(item.Label))
+			body.WriteString("\n")
 			continue
 		}
 		cursor := "  "
@@ -731,31 +742,107 @@ func (m Model) renderMenu() string {
 		if item.Hint != "" {
 			line += "  " + StyleDim.Render(item.Hint)
 		}
-		sb.WriteString(cursor + line + "\n")
+		body.WriteString(cursor)
+		body.WriteString(line)
+		body.WriteString("\n")
 	}
-	sb.WriteString("\n" + StyleDim.Render("  Enter confirmar · Esc cancelar") + "\n")
-	return sb.String()
+
+	body.WriteString("\n")
+	body.WriteString(StyleDim.Render("Enter confirmar · Esc cancelar"))
+
+	outerW := m.width - 4
+	if outerW < 30 {
+		outerW = 30
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("75")).
+		Padding(0, 1).
+		Width(outerW)
+
+	return "\n" + box.Render(body.String()) + "\n"
+}
+
+func toolIcon(prompt string) string {
+	lp := strings.ToLower(prompt)
+	switch {
+	case strings.Contains(lp, "bash"):
+		return "⚡"
+	case strings.Contains(lp, "write"):
+		return "✏ "
+	case strings.Contains(lp, "read"):
+		return "📄"
+	case strings.Contains(lp, "memory"):
+		return "🧠"
+	default:
+		return "🔑"
+	}
+}
+
+func scrollIndicator(vp viewport.Model) string {
+	if vp.TotalLineCount() <= vp.Height {
+		return ""
+	}
+	pct := int(vp.ScrollPercent() * 100)
+	return StyleDim.Render(fmt.Sprintf(" %d%% ↕", pct))
 }
 
 func (m Model) viewApprovalModal() string {
-	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+	var sb strings.Builder
+
+	// Banner stays visible for context.
+	ban := m.banner()
+	sb.WriteString(ban)
+	sb.WriteString("\n")
+
+	// Show a small slice of the conversation so the user remembers what triggered this.
+	if m.vp.Height > 0 {
+		contextLines := 3
+		savedH := m.vp.Height
+		if savedH > contextLines {
+			m.vp.Height = contextLines
+		}
+		sb.WriteString(m.vp.View())
+		m.vp.Height = savedH
+		sb.WriteString("\n")
+	}
+
+	// Modal dimensions: border(2) + padding(2) = 4 overhead; margin of 4.
+	outerW := m.width - 4
+	if outerW < 44 {
+		outerW = 44
+	}
+	innerW := outerW - 4 // padding(1 each side) + border(1 each side)
+
 	borderStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("220")).
-		Padding(0, 1)
+		Padding(0, 1).
+		Width(outerW)
 
-	w := m.width - 4
-	if w < 40 {
-		w = 40
+	titleStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+	icon := toolIcon(m.approvalPrompt)
+	title := titleStyle.Render(icon + " " + m.approvalPrompt)
+
+	sep := StyleBorder.Render(strings.Repeat("─", innerW))
+
+	// Scroll indicator aligned to the right of the detail viewport.
+	scrollHint := scrollIndicator(m.approvalVP)
+	detailView := m.approvalVP.View()
+	if scrollHint != "" {
+		// Place scroll hint on its own line after the viewport.
+		detailView = detailView + "\n" + lipgloss.NewStyle().
+			Width(innerW).Align(lipgloss.Right).Render(scrollHint)
 	}
 
-	title := titleStyle.Render(m.approvalPrompt)
-	sep := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).
-		Render(strings.Repeat("─", w-4))
-	hint := StyleDim.Render("  y: aprobar · a: siempre · n: denegar · esc: cancelar")
+	body := title + "\n" + sep + "\n" + detailView
+	modal := borderStyle.Render(body)
 
-	body := title + "\n" + sep + "\n" + m.approvalVP.View()
-	modal := borderStyle.Width(w).Render(body)
+	sb.WriteString("\n")
+	sb.WriteString(modal)
+	sb.WriteString("\n")
+	sb.WriteString(StyleDim.Render("  y aprobar · a siempre · n denegar · esc cancelar"))
+	sb.WriteString("\n")
 
-	return modal + "\n" + hint + "\n"
+	return sb.String()
 }

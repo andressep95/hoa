@@ -9,4 +9,7 @@ var (
 	StyleTool     = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
 	StyleTitle    = lipgloss.NewStyle().Foreground(lipgloss.Color("33")).Bold(true)
 	StyleSubtitle = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
+	StyleWarning  = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	StyleSuccess  = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))
+	StyleBorder   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 )
