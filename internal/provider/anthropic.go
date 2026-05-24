@@ -18,8 +18,9 @@ type AnthropicProvider struct {
 	maxTokens int64
 	system    string
 
-	mu    sync.Mutex
-	total api.Usage
+	mu             sync.Mutex
+	total          api.Usage
+	knowledgeBlock string
 }
 
 func NewAnthropicProvider(apiKey string, model string, maxTokens int64, system string) *AnthropicProvider {
@@ -53,17 +54,34 @@ func (p *AnthropicProvider) TotalUsage() api.Usage {
 	return p.total
 }
 
+func (p *AnthropicProvider) SetKnowledgeContext(text string) {
+	p.mu.Lock()
+	p.knowledgeBlock = text
+	p.mu.Unlock()
+}
+
 func (p *AnthropicProvider) Send(ctx context.Context, messages []api.Message, tools []api.ToolDef) (api.Response, error) {
+	p.mu.Lock()
+	kb := p.knowledgeBlock
+	p.mu.Unlock()
+
+	system := []anthropic.TextBlockParam{{
+		Text:         p.system,
+		CacheControl: anthropic.NewCacheControlEphemeralParam(),
+	}}
+	if kb != "" {
+		system = append(system, anthropic.TextBlockParam{
+			Text:         kb,
+			CacheControl: anthropic.NewCacheControlEphemeralParam(),
+		})
+	}
+
 	resp, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     p.model,
 		MaxTokens: p.maxTokens,
-		System: []anthropic.TextBlockParam{{
-			Text:         p.system,
-			CacheControl: anthropic.NewCacheControlEphemeralParam(),
-		}},
-		Messages:     toAnthropicMessages(messages),
-		Tools:        toAnthropicTools(tools),
-		CacheControl: anthropic.NewCacheControlEphemeralParam(),
+		System:    system,
+		Messages:  toAnthropicMessages(messages),
+		Tools:     toAnthropicTools(tools),
 	})
 	if err != nil {
 		return api.Response{}, err

@@ -55,6 +55,8 @@ func (p *OpenAIProvider) TotalUsage() api.Usage {
 	return p.total
 }
 
+func (p *OpenAIProvider) SetKnowledgeContext(_ string) {} // no-op: OpenAI has no prompt caching
+
 func (p *OpenAIProvider) Send(ctx context.Context, messages []api.Message, tools []api.ToolDef) (api.Response, error) {
 	p.mu.Lock()
 	model := p.model

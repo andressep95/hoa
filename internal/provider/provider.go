@@ -14,4 +14,8 @@ type Provider interface {
 	Model() string
 	SetModel(name string)
 	TotalUsage() api.Usage
+	// SetKnowledgeContext stores a static knowledge block that gets injected
+	// as a cached system block on every Send call. No-op if the backend does
+	// not support prompt caching.
+	SetKnowledgeContext(text string)
 }
