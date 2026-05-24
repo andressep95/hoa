@@ -1,7 +1,10 @@
 // Package command implements the slash command dispatch system.
 package command
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // MenuItem represents one option in an interactive menu.
 type MenuItem struct {
@@ -35,6 +38,8 @@ type Context struct {
 	GetMode       func() string
 	SetMode       func(string)
 	TokensUsed    func() (int, int)
+	CostTotal     func() float64 // estimated USD cost for the active session
+	WorkingCount  func() int     // number of files currently in working_changes
 	ClearHist     func()
 	ToolNames     func() []string
 	AgentSend     func(prompt string) (string, error)
@@ -47,6 +52,28 @@ type Context struct {
 	SetMemoryDSN  func(dsn string)
 	SetMemoryKey  func(apiKey string)
 	PromptInput   func(label, placeholder string, mask bool) string
+
+	// OracleStatus returns liveness info from the health monitor.
+	// Returns ok=false, err=nil, since=zero when no monitor is active.
+	OracleStatus func() (ok bool, err error, since time.Time)
+
+	// WorkingSnapshot returns the cached working_changes used for /status.
+	WorkingSnapshot func() WorkingSnapshotData
+
+	// RememberedTools returns names the user pressed 'always' for.
+	RememberedTools func() []string
+}
+
+// WorkingSnapshotData mirrors memory.WorkingChanges without importing the
+// memory package (avoid an import cycle through ui→command).
+type WorkingSnapshotData struct {
+	Files []FileSnapshot
+}
+
+// FileSnapshot describes one entry in WorkingSnapshotData.Files.
+type FileSnapshot struct {
+	Path      string
+	SizeBytes int
 }
 
 // Handler is a function that executes a slash command.

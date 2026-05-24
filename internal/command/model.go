@@ -16,7 +16,7 @@ func cmdModel(ctx *Context, _ string) Result {
 		model := m
 		hint := ""
 		if model == base {
-			hint = "✔"
+			hint = "*"
 		}
 		items = append(items, MenuItem{
 			Label:  "  " + model,
@@ -33,7 +33,7 @@ func cmdModel(ctx *Context, _ string) Result {
 			model := m
 			hint := ""
 			if model == plan {
-				hint = "✔"
+				hint = "*"
 			}
 			items = append(items, MenuItem{
 				Label:  "  " + model,

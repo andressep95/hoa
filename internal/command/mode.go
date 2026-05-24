@@ -17,14 +17,14 @@ func cmdMode(ctx *Context, _ string) Result {
 		},
 	}
 	return Result{
-		Title: fmt.Sprintf("  ⚡ Modo actual: %s", current),
+		Title: fmt.Sprintf("  Modo actual: %s", current),
 		Menu:  items,
 	}
 }
 
 func modeHint(mode, current string) string {
 	if mode == current {
-		return "✔ activo"
+		return "* activo"
 	}
 	return ""
 }

@@ -12,7 +12,7 @@ func init() {
 
 func cmdFeedback(ctx *Context, args string) Result {
 	if ctx.MemoryEnabled == nil || !ctx.MemoryEnabled() || ctx.MemoryDSN() == "" {
-		return Result{Lines: []string{"  ❌ Memoria no configurada. Usa /memory enable primero."}}
+		return Result{Lines: []string{"  [x] Memoria no configurada. Usa /memory enable primero."}}
 	}
 
 	if args == "" {
@@ -20,7 +20,7 @@ func cmdFeedback(ctx *Context, args string) Result {
 			"  /feedback <regla>           — Guardar una regla de feedback",
 			"  /feedback list              — Ver reglas activas",
 			"",
-			"  Ejemplo: /feedback No usar mocks en tests de integración porque divergen de prod",
+			"  Ejemplo: /feedback No usar mocks en tests de integracion porque divergen de prod",
 		}}
 	}
 
@@ -34,14 +34,14 @@ func cmdFeedback(ctx *Context, args string) Result {
 		AsyncFn: func() Result {
 			client, err := memory.NewClient(ctx.MemoryDSN(), ctx.MemoryAPIKey())
 			if err != nil {
-				return Result{Lines: []string{"  ❌ " + err.Error()}}
+				return Result{Lines: []string{"  [x] " + err.Error()}}
 			}
 			defer client.Close()
 
 			if err := client.SaveFeedback(args, "", ""); err != nil {
-				return Result{Lines: []string{"  ❌ Error guardando: " + err.Error()}}
+				return Result{Lines: []string{"  [x] Error guardando: " + err.Error()}}
 			}
-			return Result{Lines: []string{"  ✓ Feedback guardado: " + args}}
+			return Result{Lines: []string{"  [ok] Feedback guardado: " + args}}
 		},
 	}
 }
@@ -52,21 +52,21 @@ func feedbackList(ctx *Context) Result {
 		AsyncFn: func() Result {
 			client, err := memory.NewClient(ctx.MemoryDSN(), ctx.MemoryAPIKey())
 			if err != nil {
-				return Result{Lines: []string{"  ❌ " + err.Error()}}
+				return Result{Lines: []string{"  [x] " + err.Error()}}
 			}
 			defer client.Close()
 
 			rules, err := client.SearchFeedback("", 20)
 			if err != nil {
-				return Result{Lines: []string{"  ❌ " + err.Error()}}
+				return Result{Lines: []string{"  [x] " + err.Error()}}
 			}
 			if len(rules) == 0 {
 				return Result{Lines: []string{"  No hay feedback guardado."}}
 			}
 
-			lines := []string{fmt.Sprintf("  📋 %d regla(s) activas:", len(rules)), ""}
+			lines := []string{fmt.Sprintf("  [list] %d regla(s) activas:", len(rules)), ""}
 			for _, r := range rules {
-				line := "  • " + r.Rule
+				line := "  - " + r.Rule
 				if r.Why != "" {
 					line += " — " + r.Why
 				}

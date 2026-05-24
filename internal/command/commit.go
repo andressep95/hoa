@@ -170,12 +170,12 @@ func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) 
 	if len(commits) == 1 {
 		msg := commits[0].Message()
 		items = append(items, MenuItem{
-			Label:  "✓ Confirmar commit",
+			Label:  "[ok] Confirmar commit",
 			Action: func() string { return executeCommit(ctx, msg, commits[0].Files, sensitive) },
 		})
 	} else {
 		items = append(items, MenuItem{
-			Label: fmt.Sprintf("✓ Commitear %d commits separados", len(commits)),
+			Label: fmt.Sprintf("[ok] Commitear %d commits separados", len(commits)),
 			Action: func() string {
 				var results []string
 				for _, c := range commits {
@@ -185,7 +185,7 @@ func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) 
 			},
 		})
 		items = append(items, MenuItem{
-			Label: "⊕ Unificar en 1 solo commit",
+			Label: "[+] Unificar en 1 solo commit",
 			Action: func() string {
 				return executeCommit(ctx, commits[0].Message(), nil, sensitive)
 			},
@@ -193,11 +193,11 @@ func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) 
 	}
 
 	items = append(items, MenuItem{
-		Label:  "✎ Dar feedback (regenerar)",
+		Label:  "[edit] Dar feedback (regenerar)",
 		Action: nil, // TODO: prompt user for feedback text, re-run with guidance
 	})
 	items = append(items, MenuItem{
-		Label:  "✗ Cancelar",
+		Label:  "[x] Cancelar",
 		Action: func() string { return "" },
 	})
 
@@ -210,7 +210,7 @@ func presentCommits(commits []CommitProposal, sensitive []string, ctx *Context) 
 
 func executeCommit(ctx *Context, msg string, files []string, sensitive []string) string {
 	if errs := ValidateCommitMsg(msg); len(errs) > 0 {
-		return "❌ validación falló: " + errs[0]
+		return "[x] validacion fallo: " + errs[0]
 	}
 
 	if len(files) > 0 {
@@ -230,7 +230,7 @@ func executeCommit(ctx *Context, msg string, files []string, sensitive []string)
 
 	out, err := exec.Command("git", "commit", "-m", msg).CombinedOutput()
 	if err != nil {
-		return "❌ " + strings.TrimSpace(string(out))
+		return "[x] " + strings.TrimSpace(string(out))
 	}
 
 	// Get the hash of the commit we just made
@@ -264,7 +264,7 @@ func pushToMemory(ctx *Context, commitHash string) string {
 
 	res, err := memory.SyncOne(client, commitHash, ctx.AgentSend)
 	if err != nil {
-		return "  ⚠️  Memoria: error indexando"
+		return "  [!] Memoria: error indexando"
 	}
 	if res.Inserted == 0 {
 		return ""

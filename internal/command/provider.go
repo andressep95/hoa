@@ -18,7 +18,7 @@ func cmdProvider(ctx *Context, _ string) Result {
 		prov := p
 		hint := ""
 		if prov == current {
-			hint = "✔ activo"
+			hint = "* activo"
 		}
 		items = append(items, MenuItem{
 			Label:  prov,
@@ -36,7 +36,7 @@ func cmdProvider(ctx *Context, _ string) Result {
 		if !configured[p] {
 			prov := p
 			items = append(items, MenuItem{
-				Label:  "＋ Agregar " + prov,
+				Label:  "+ Agregar " + prov,
 				Action: func() string {
 					ctx.SetupProvider(prov)
 					ctx.SetProvider(prov)
@@ -49,12 +49,12 @@ func cmdProvider(ctx *Context, _ string) Result {
 	// Section 3: Modify existing (change API key)
 	items = append(items, MenuItem{Label: "───────────────────"})
 	items = append(items, MenuItem{
-		Label:  "🔑 Cambiar API key de " + current,
+		Label:  "[key] Cambiar API key de " + current,
 		Action: func() string { ctx.SetupProvider(current); return "" },
 	})
 
 	return Result{
-		Title: fmt.Sprintf("  🔌 Provider actual: %s", current),
+		Title: fmt.Sprintf("  Provider actual: %s", current),
 		Menu:  items,
 	}
 }

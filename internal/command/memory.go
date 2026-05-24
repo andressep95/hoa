@@ -26,11 +26,11 @@ func memoryStatus(ctx *Context) Result {
 
 	if !enabled {
 		return Result{
-			Title: "  🧠 Memoria: deshabilitada",
+			Title: "  [mem] Memoria: deshabilitada",
 			Lines: []string{
 				"",
 				"  provider: oracle 23ai",
-				"  estado:   ○ desconectada",
+				"  estado:   ( ) desconectada",
 				"",
 			},
 			Menu: []MenuItem{
@@ -47,11 +47,11 @@ func memoryStatus(ctx *Context) Result {
 	apiKey := ctx.MemoryAPIKey()
 	if dsn == "" || apiKey == "" {
 		return Result{
-			Title: "  🧠 Memoria: ⚠️  sin configurar",
+			Title: "  [mem] Memoria: [!] sin configurar",
 			Lines: []string{
 				"",
 				"  provider: oracle 23ai",
-				"  estado:   ⚠️  falta DSN / API Key",
+				"  estado:   [!] falta DSN / API Key",
 				"",
 			},
 			Menu: []MenuItem{
@@ -71,11 +71,11 @@ func memoryStatus(ctx *Context) Result {
 	client, err := memory.NewClient(dsn, apiKey)
 	if err != nil {
 		return Result{
-			Title: "  🧠 Memoria: ✗ error de conexión",
+			Title: "  [mem] Memoria: [x] error de conexion",
 			Lines: []string{
 				"",
 				"  provider: oracle 23ai",
-				"  estado:   ✗ " + err.Error(),
+				"  estado:   [x] " + err.Error(),
 				"",
 			},
 			Menu: []MenuItem{
@@ -94,13 +94,13 @@ func memoryStatus(ctx *Context) Result {
 
 	indexed, pending, err := client.CountIndexed()
 	if err != nil {
-		return Result{Lines: []string{"  ❌ Error consultando: " + err.Error()}}
+		return Result{Lines: []string{"  [x] Error consultando: " + err.Error()}}
 	}
 
 	lines := []string{
 		"",
 		"  provider:    oracle 23ai",
-		"  estado:      ● conectada",
+		"  estado:      (*) conectada",
 		fmt.Sprintf("  indexados:   %d archivos", indexed),
 	}
 	if pending > 0 {
@@ -109,7 +109,7 @@ func memoryStatus(ctx *Context) Result {
 	lines = append(lines, "")
 
 	return Result{
-		Title: "  🧠 Memoria: ✓ conectada",
+		Title: "  [mem] Memoria: [ok] conectada",
 		Lines: lines,
 		Menu: []MenuItem{
 			{
@@ -118,16 +118,16 @@ func memoryStatus(ctx *Context) Result {
 				AsyncAction: func() Result {
 					client2, err := memory.NewClient(ctx.MemoryDSN(), ctx.MemoryAPIKey())
 					if err != nil {
-						return Result{Lines: []string{"  ❌ " + err.Error()}}
+						return Result{Lines: []string{"  [x] " + err.Error()}}
 					}
 					defer client2.Close()
 
 					res, err := memory.Sync(client2, "HEAD", ctx.AgentSend)
 					if err != nil {
-						return Result{Lines: []string{"  ❌ Sync falló: " + err.Error()}}
+						return Result{Lines: []string{"  [x] Sync fallo: " + err.Error()}}
 					}
 					out := []string{
-						fmt.Sprintf("  ✓ Sync completo: %d commits procesados", res.Total),
+						fmt.Sprintf("  [ok] Sync completo: %d commits procesados", res.Total),
 						fmt.Sprintf("    insertados:  %d", res.Inserted),
 						fmt.Sprintf("    skipped:     %d", res.Skipped),
 					}
@@ -167,47 +167,47 @@ func doMemorySetup(ctx *Context) string {
 	// Test connection
 	client, err := memory.ConnectDSN(dsn)
 	if err != nil {
-		return "✗ No se pudo conectar: " + err.Error()
+		return "[x] No se pudo conectar: " + err.Error()
 	}
 	defer client.Close()
 
-	apiKey := ctx.PromptInput("  API Key (vacío = crear proyecto nuevo):", "", false)
+	apiKey := ctx.PromptInput("  API Key (vacio = crear proyecto nuevo):", "", false)
 
 	if apiKey == "" {
 		// Create project automatically
 		name := memory.RepoName()
 		newKey, err := client.CreateProject(name)
 		if err != nil {
-			return "✗ Error creando proyecto: " + err.Error()
+			return "[x] Error creando proyecto: " + err.Error()
 		}
 		apiKey = newKey
 	} else {
 		if err := client.ResolveProject(apiKey); err != nil {
-			return "✗ " + err.Error()
+			return "[x] " + err.Error()
 		}
 	}
 
 	ctx.SetMemoryKey(apiKey)
 	ctx.SetMemory(true)
 
-	return fmt.Sprintf("✓ conectada · proyecto: %s", apiKey)
+	return fmt.Sprintf("[ok] conectada · proyecto: %s", apiKey)
 }
 
 func memorySetup(ctx *Context) Result {
 	result := doMemorySetup(ctx)
-	return Result{Lines: []string{"  🧠 " + result}}
+	return Result{Lines: []string{"  [mem] " + result}}
 }
 
 func memoryDisable(ctx *Context) Result {
 	if ctx.SetMemory != nil {
 		ctx.SetMemory(false)
 	}
-	return Result{Lines: []string{"  🧠 memoria: deshabilitada"}}
+	return Result{Lines: []string{"  [mem] memoria: deshabilitada"}}
 }
 
 func memorySync(ctx *Context) Result {
 	if ctx.MemoryEnabled == nil || !ctx.MemoryEnabled() || ctx.MemoryDSN() == "" {
-		return Result{Lines: []string{"  ❌ Memoria no configurada. Usa /memory enable primero."}}
+		return Result{Lines: []string{"  [x] Memoria no configurada. Usa /memory enable primero."}}
 	}
 
 	dsn := ctx.MemoryDSN()
@@ -215,21 +215,21 @@ func memorySync(ctx *Context) Result {
 	llm := ctx.AgentSend
 
 	return Result{
-		Lines: []string{"  🧠 Sincronizando historial con Oracle..."},
+		Lines: []string{"  [mem] Sincronizando historial con Oracle..."},
 		AsyncFn: func() Result {
 			client, err := memory.NewClient(dsn, apiKey)
 			if err != nil {
-				return Result{Lines: []string{"  ❌ " + err.Error()}}
+				return Result{Lines: []string{"  [x] " + err.Error()}}
 			}
 			defer client.Close()
 
 			res, err := memory.Sync(client, "HEAD", llm)
 			if err != nil {
-				return Result{Lines: []string{"  ❌ Sync falló: " + err.Error()}}
+				return Result{Lines: []string{"  [x] Sync fallo: " + err.Error()}}
 			}
 
 			lines := []string{
-				fmt.Sprintf("  ✓ Sync completo: %d commits procesados", res.Total),
+				fmt.Sprintf("  [ok] Sync completo: %d commits procesados", res.Total),
 				fmt.Sprintf("    insertados:  %d", res.Inserted),
 				fmt.Sprintf("    skipped:     %d", res.Skipped),
 			}
